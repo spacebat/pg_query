@@ -1,4 +1,6 @@
 #include "pg_query.h"
+#include "pg_query_qualify.h"
+
 #include "xxhash/xxhash.h"
 #include <ruby.h>
 
@@ -13,12 +15,13 @@ VALUE pg_query_ruby_normalize(VALUE self, VALUE input);
 VALUE pg_query_ruby_fingerprint(VALUE self, VALUE input);
 VALUE pg_query_ruby_scan(VALUE self, VALUE input);
 VALUE pg_query_ruby_hash_xxh3_64(VALUE self, VALUE input, VALUE seed);
+VALUE pg_query_ruby_qualify(VALUE self, VALUE sql_str, VALUE schema_str);
 
 __attribute__((visibility ("default"))) void Init_pg_query(void)
 {
 	VALUE cPgQuery;
 
-	cPgQuery = rb_const_get(rb_cObject, rb_intern("PgQuery"));
+	cPgQuery = rb_define_module("PgQuery");
 
 	rb_define_singleton_method(cPgQuery, "parse_protobuf", pg_query_ruby_parse_protobuf, 1);
 	rb_define_singleton_method(cPgQuery, "deparse_protobuf", pg_query_ruby_deparse_protobuf, 1);
@@ -26,6 +29,7 @@ __attribute__((visibility ("default"))) void Init_pg_query(void)
 	rb_define_singleton_method(cPgQuery, "fingerprint", pg_query_ruby_fingerprint, 1);
 	rb_define_singleton_method(cPgQuery, "_raw_scan", pg_query_ruby_scan, 1);
 	rb_define_singleton_method(cPgQuery, "hash_xxh3_64", pg_query_ruby_hash_xxh3_64, 2);
+	rb_define_singleton_method(cPgQuery, "qualify", pg_query_ruby_qualify, 2);
 	rb_define_const(cPgQuery, "PG_VERSION", rb_str_new2(PG_VERSION));
 	rb_define_const(cPgQuery, "PG_MAJORVERSION", rb_str_new2(PG_MAJORVERSION));
 	rb_define_const(cPgQuery, "PG_VERSION_NUM", INT2NUM(PG_VERSION_NUM));
@@ -226,5 +230,23 @@ VALUE pg_query_ruby_hash_xxh3_64(VALUE self, VALUE input, VALUE seed)
 #else
 	return ULONG2NUM(XXH3_64bits_withSeed(StringValuePtr(input), RSTRING_LEN(input), NUM2ULONG(seed)));
 #endif
-	
+
+}
+
+VALUE pg_query_ruby_qualify(VALUE self, VALUE sql_str, VALUE schema_str) {
+	Check_Type(sql_str, T_STRING);
+	Check_Type(schema_str, T_STRING);
+
+	const char* sql = StringValueCStr(sql_str);
+	const char* schema = StringValueCStr(schema_str);
+
+	char* result = pg_query_qualify_sql(sql, schema);
+
+	if (result) {
+		VALUE output = rb_str_new_cstr(result);
+		free(result);
+		return output;
+	} else {
+		return Qnil;
+	}
 }
