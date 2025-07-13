@@ -382,26 +382,24 @@ describe PgQuery, '#qualify' do
     end
 
     it "should fully qualify tables in INSERT ON CONFLICT subqueries" do
-      pending "Tables in INSERT ON CONFLICT subqueries should be fully qualified"
       query = described_class.qualify("INSERT INTO users (name, email) VALUES ('John', 'john@example.com') ON CONFLICT (email) DO UPDATE SET name = (SELECT name FROM profiles WHERE user_id = users.id)", "public")
-      expect(query).to eq "INSERT INTO public.users (name, email) VALUES ('John', 'john@example.com') ON CONFLICT (email) DO UPDATE SET name = (SELECT name FROM public.profiles WHERE user_id = public.users.id)"
+      expect(query).to eq "INSERT INTO public.users (name, email) VALUES ('John', 'john@example.com') ON CONFLICT (email) DO UPDATE SET name = (SELECT name FROM public.profiles WHERE user_id = users.id)"
     end
 
     it "should fully qualify tables in RETURNING subqueries" do
       pending "Tables in RETURNING subqueries should be fully qualified"
       query = described_class.qualify("INSERT INTO users (name) VALUES ('John') RETURNING id, (SELECT COUNT(*) FROM orders WHERE user_id = users.id)", "public")
-      expect(query).to eq "INSERT INTO public.users (name) VALUES ('John') RETURNING id, (SELECT count(*) FROM public.orders WHERE user_id = public.users.id)"
+      expect(query).to eq "INSERT INTO public.users (name) VALUES ('John') RETURNING id, (SELECT count(*) FROM public.orders WHERE user_id = users.id)"
     end
 
     it "should fully qualify tables in UPDATE SET subqueries" do
       query = described_class.qualify("UPDATE users SET order_count = (SELECT COUNT(*) FROM orders WHERE user_id = users.id)", "public")
-      expect(query).to eq "UPDATE public.users SET order_count = (SELECT count(*) FROM public.orders WHERE user_id = public.users.id)"
+      expect(query).to eq "UPDATE public.users SET order_count = (SELECT count(*) FROM public.orders WHERE user_id = users.id)"
     end
 
     it "should fully qualify tables in DELETE WHERE EXISTS subqueries" do
-      pending "Tables in DELETE WHERE EXISTS subqueries should be fully qualified"
       query = described_class.qualify("DELETE FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE user_id = users.id AND status = 'cancelled')", "public")
-      expect(query).to eq "DELETE FROM public.users WHERE EXISTS (SELECT 1 FROM public.orders WHERE user_id = public.users.id AND status = 'cancelled')"
+      expect(query).to eq "DELETE FROM public.users WHERE EXISTS (SELECT 1 FROM public.orders WHERE user_id = users.id AND status = 'cancelled')"
     end
   end
 
@@ -414,7 +412,7 @@ describe PgQuery, '#qualify' do
     it "should fully qualify tables in CASE expression subqueries" do
       pending "Tables in CASE expression subqueries should be fully qualified"
       query = described_class.qualify("SELECT CASE WHEN (SELECT COUNT(*) FROM orders WHERE user_id = users.id) > 0 THEN 'Active' ELSE 'Inactive' END FROM users", "public")
-      expect(query).to eq "SELECT CASE WHEN (SELECT count(*) FROM public.orders WHERE user_id = public.users.id) > 0 THEN 'Active' ELSE 'Inactive' END FROM public.users"
+      expect(query).to eq "SELECT CASE WHEN (SELECT count(*) FROM public.orders WHERE user_id = users.id) > 0 THEN 'Active' ELSE 'Inactive' END FROM public.users"
     end
 
     it "should fully qualify tables in array subqueries" do
@@ -424,15 +422,14 @@ describe PgQuery, '#qualify' do
     end
 
     it "should fully qualify tables in aggregate function subqueries" do
-      pending "Tables in aggregate function subqueries should be fully qualified"
       query = described_class.qualify("SELECT COUNT((SELECT 1 FROM orders WHERE user_id = users.id)) FROM users", "public")
-      expect(query).to eq "SELECT count((SELECT 1 FROM public.orders WHERE user_id = public.users.id)) FROM public.users"
+      expect(query).to eq "SELECT count((SELECT 1 FROM public.orders WHERE user_id = users.id)) FROM public.users"
     end
 
     it "should fully qualify tables in window function subqueries" do
       pending "Tables in window function subqueries should be fully qualified"
       query = described_class.qualify("SELECT ROW_NUMBER() OVER (ORDER BY (SELECT created_at FROM profiles WHERE user_id = users.id)) FROM users", "public")
-      expect(query).to eq "SELECT row_number() OVER (ORDER BY (SELECT created_at FROM public.profiles WHERE user_id = public.users.id)) FROM public.users"
+      expect(query).to eq "SELECT row_number() OVER (ORDER BY (SELECT created_at FROM public.profiles WHERE user_id = users.id)) FROM public.users"
     end
 
     it "should fully qualify tables in complex nested expressions" do
