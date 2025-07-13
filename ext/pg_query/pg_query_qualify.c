@@ -187,6 +187,11 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
             qualify_node(sortby->node, schema, cte_names);
             break;
         }
+        case T_RangeSubselect: {
+            RangeSubselect *subselect = (RangeSubselect *) node;
+            qualify_node(subselect->subquery, schema, cte_names);
+            break;
+        }
         case T_ColumnRef:
         case T_A_Const:
         case T_TypeCast:
@@ -204,7 +209,6 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
         case T_ConvertRowtypeExpr:
         case T_CollateExpr:
         case T_WindowDef:
-        case T_RangeSubselect:
         case T_RangeFunction:
         case T_TypeName:
         case T_ColumnDef:

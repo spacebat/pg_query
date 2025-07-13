@@ -485,7 +485,6 @@ describe PgQuery, '#qualify' do
     end
 
     it "should handle lateral joins with subqueries" do
-      pending "LATERAL joins with subqueries should be fully qualified"
       query = described_class.qualify("SELECT * FROM users u, LATERAL (SELECT * FROM orders WHERE user_id = u.id) o", "public")
       expect(query).to eq "SELECT * FROM public.users u, LATERAL (SELECT * FROM public.orders WHERE user_id = u.id) o"
     end
@@ -509,7 +508,6 @@ describe PgQuery, '#qualify' do
     end
 
     it "should handle table expressions in FROM clauses" do
-      pending "Table expressions in FROM clauses should be fully qualified"
       query = described_class.qualify("SELECT * FROM (SELECT * FROM users WHERE active = true) u JOIN (SELECT * FROM orders WHERE status = 'pending') o ON u.id = o.user_id", "public")
       expect(query).to eq "SELECT * FROM (SELECT * FROM public.users WHERE active = true) u JOIN (SELECT * FROM public.orders WHERE status = 'pending') o ON u.id = o.user_id"
     end
