@@ -533,7 +533,6 @@ describe PgQuery, '#qualify' do
     end
 
     it "should handle schema-qualified CTE references" do
-      pending "Schema-qualified CTE references should be handled correctly"
       query = described_class.qualify("WITH my_cte AS (SELECT * FROM users) SELECT * FROM public.my_cte", "public")
       expect(query).to eq "WITH my_cte AS (SELECT * FROM public.users) SELECT * FROM my_cte"
     end

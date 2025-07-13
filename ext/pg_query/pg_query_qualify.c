@@ -9,17 +9,20 @@
 #include "utils/memutils.h"
 
 static void qualify_rangevar(RangeVar *rv, const char *schema, List *cte_names) {
-    if (!rv->schemaname || strcmp(rv->schemaname, "") == 0) {
-        // Check if this is a CTE name, if so, don't qualify it
-        if (cte_names) {
-            ListCell *lc;
-            foreach(lc, cte_names) {
-                char *cte_name = (char *) lfirst(lc);
-                if (strcmp(rv->relname, cte_name) == 0) {
-                    return; // Don't qualify CTE names
-                }
+    // Check if this is a CTE name, if so, remove any schema qualification
+    if (cte_names) {
+        ListCell *lc;
+        foreach(lc, cte_names) {
+            char *cte_name = (char *) lfirst(lc);
+            if (strcmp(rv->relname, cte_name) == 0) {
+                rv->schemaname = NULL; // Remove any schema from CTE references
+                return;
             }
         }
+    }
+
+    // If not a CTE and not already qualified, add schema
+    if (!rv->schemaname || strcmp(rv->schemaname, "") == 0) {
         rv->schemaname = pstrdup(schema);
     }
 }
