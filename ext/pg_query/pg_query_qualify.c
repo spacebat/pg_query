@@ -179,6 +179,11 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
             qualify_node(cte->ctequery, schema, cte_names);
             break;
         }
+        case T_SortBy: {
+            SortBy *sortby = (SortBy *) node;
+            qualify_node(sortby->node, schema, cte_names);
+            break;
+        }
         case T_ColumnRef:
         case T_A_Const:
         case T_TypeCast:
@@ -195,7 +200,6 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
         case T_ArrayCoerceExpr:
         case T_ConvertRowtypeExpr:
         case T_CollateExpr:
-        case T_SortBy:
         case T_WindowDef:
         case T_RangeSubselect:
         case T_RangeFunction:

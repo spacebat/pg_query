@@ -116,7 +116,7 @@ describe PgQuery, '#qualify' do
 
     it "qualifies tables in ORDER BY clauses" do
       query = described_class.qualify("SELECT * FROM users ORDER BY (SELECT COUNT(*) FROM orders WHERE user_id = users.id)", "public")
-      expect(query).to eq "SELECT * FROM public.users ORDER BY (SELECT count(*) FROM orders WHERE user_id = users.id)"
+      expect(query).to eq "SELECT * FROM public.users ORDER BY (SELECT count(*) FROM public.orders WHERE user_id = users.id)"
     end
 
     it "qualifies tables in LIMIT and OFFSET with subqueries" do
@@ -398,9 +398,8 @@ describe PgQuery, '#qualify' do
     end
 
     it "should fully qualify tables in ORDER BY subqueries" do
-      pending "Tables in ORDER BY subqueries should be fully qualified"
       query = described_class.qualify("SELECT * FROM users ORDER BY (SELECT COUNT(*) FROM orders WHERE user_id = users.id)", "public")
-      expect(query).to eq "SELECT * FROM public.users ORDER BY (SELECT count(*) FROM public.orders WHERE user_id = public.users.id)"
+      expect(query).to eq "SELECT * FROM public.users ORDER BY (SELECT count(*) FROM public.orders WHERE user_id = users.id)"
     end
 
     it "should fully qualify tables in LIMIT/OFFSET subqueries" do
