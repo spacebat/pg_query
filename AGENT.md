@@ -2,7 +2,8 @@
 
 ## General
 - **Code priority**: Code should be clear and readable first, correct second, and performant third.
-- **Test stability**: Ensure that your changes do not break other tests in the project, unless it is unavoidable. 
+- **Test stability**: Ensure that your changes do not break other tests in the project, unless it is unavoidable.
+- **Units of work**: When a task has completed and all tests pass, make a commit.
 
 ## Commands
 - **Build**: `rake compile` (compiles C extension)
