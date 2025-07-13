@@ -71,7 +71,7 @@ describe PgQuery, '#qualify' do
 
     it "qualifies tables in NOT EXISTS subqueries" do
       query = described_class.qualify("SELECT * FROM users u WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id)", "public")
-      expect(query).to eq "SELECT * FROM public.users u WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id)"
+      expect(query).to eq "SELECT * FROM public.users u WHERE NOT EXISTS (SELECT 1 FROM public.orders o WHERE o.user_id = u.id)"
     end
 
     it "qualifies tables in subqueries in SELECT clause" do
@@ -318,7 +318,7 @@ describe PgQuery, '#qualify' do
         "WITH RECURSIVE subordinates AS (SELECT employee_id, manager_id, name FROM employees WHERE manager_id = 1 UNION ALL SELECT e.employee_id, e.manager_id, e.name FROM employees e INNER JOIN subordinates s ON s.employee_id = e.manager_id) SELECT * FROM subordinates WHERE employee_id NOT IN (SELECT manager_id FROM employees WHERE manager_id IS NOT NULL)",
         "hr"
       )
-      expect(query).to eq "WITH RECURSIVE subordinates AS (SELECT employee_id, manager_id, name FROM hr.employees WHERE manager_id = 1 UNION ALL SELECT e.employee_id, e.manager_id, e.name FROM hr.employees e JOIN subordinates s ON s.employee_id = e.manager_id) SELECT * FROM subordinates WHERE NOT employee_id IN (SELECT manager_id FROM employees WHERE manager_id IS NOT NULL)"
+      expect(query).to eq "WITH RECURSIVE subordinates AS (SELECT employee_id, manager_id, name FROM hr.employees WHERE manager_id = 1 UNION ALL SELECT e.employee_id, e.manager_id, e.name FROM hr.employees e JOIN subordinates s ON s.employee_id = e.manager_id) SELECT * FROM subordinates WHERE NOT employee_id IN (SELECT manager_id FROM hr.employees WHERE manager_id IS NOT NULL)"
     end
 
     it "handles window functions with CTEs" do
@@ -392,7 +392,6 @@ describe PgQuery, '#qualify' do
 
   describe "pending improvements - complex subquery contexts" do
     it "should fully qualify tables in NOT EXISTS subqueries" do
-      pending "Tables in NOT EXISTS subqueries should be fully qualified"
       query = described_class.qualify("SELECT * FROM users u WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id)", "public")
       expect(query).to eq "SELECT * FROM public.users u WHERE NOT EXISTS (SELECT 1 FROM public.orders o WHERE o.user_id = u.id)"
     end
@@ -500,7 +499,6 @@ describe PgQuery, '#qualify' do
     end
 
     it "should handle recursive CTE references in complex contexts" do
-      pending "Recursive CTE references in complex contexts should be properly handled"
       query = described_class.qualify("WITH RECURSIVE tree AS (SELECT * FROM categories WHERE parent_id IS NULL UNION ALL SELECT c.* FROM categories c, tree WHERE c.parent_id = tree.id AND EXISTS (SELECT 1 FROM products WHERE category_id = c.id)) SELECT * FROM tree", "public")
       expect(query).to eq "WITH RECURSIVE tree AS (SELECT * FROM public.categories WHERE parent_id IS NULL UNION ALL SELECT c.* FROM public.categories c, tree WHERE c.parent_id = tree.id AND EXISTS (SELECT 1 FROM public.products WHERE category_id = c.id)) SELECT * FROM tree"
     end
@@ -511,7 +509,6 @@ describe PgQuery, '#qualify' do
     end
 
     it "should handle complex correlated subqueries" do
-      pending "Complex correlated subqueries should be fully qualified"
       query = described_class.qualify("SELECT * FROM users u WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id AND o.total > (SELECT AVG(total) FROM orders o2 WHERE o2.user_id = u.id))", "public")
       expect(query).to eq "SELECT * FROM public.users u WHERE EXISTS (SELECT 1 FROM public.orders o WHERE o.user_id = u.id AND o.total > (SELECT avg(total) FROM public.orders o2 WHERE o2.user_id = u.id))"
     end

@@ -198,10 +198,14 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
             qualify_list(list, schema, cte_names);
             break;
         }
+        case T_BoolExpr: {
+            BoolExpr *boolexpr = (BoolExpr *) node;
+            qualify_list(boolexpr->args, schema, cte_names);
+            break;
+        }
         case T_ColumnRef:
         case T_A_Const:
         case T_TypeCast:
-        case T_BoolExpr:
         case T_NullTest:
         case T_BooleanTest:
         case T_CaseExpr:
