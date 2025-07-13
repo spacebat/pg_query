@@ -138,12 +138,12 @@ describe PgQuery, '#qualify' do
 
     it "qualifies tables in INSERT ON CONFLICT with subquery" do
       query = described_class.qualify("INSERT INTO users (name, email) VALUES ('John', 'john@example.com') ON CONFLICT (email) DO UPDATE SET name = (SELECT name FROM profiles WHERE user_id = users.id)", "public")
-      expect(query).to eq "INSERT INTO public.users (name, email) VALUES ('John', 'john@example.com') ON CONFLICT (email) DO UPDATE SET name = (SELECT name FROM profiles WHERE user_id = users.id)"
+      expect(query).to eq "INSERT INTO public.users (name, email) VALUES ('John', 'john@example.com') ON CONFLICT (email) DO UPDATE SET name = (SELECT name FROM public.profiles WHERE user_id = users.id)"
     end
 
     it "qualifies tables in INSERT RETURNING with subquery" do
       query = described_class.qualify("INSERT INTO users (name) VALUES ('John') RETURNING id, (SELECT COUNT(*) FROM orders WHERE user_id = users.id)", "public")
-      expect(query).to eq "INSERT INTO public.users (name) VALUES ('John') RETURNING id, (SELECT count(*) FROM orders WHERE user_id = users.id)"
+      expect(query).to eq "INSERT INTO public.users (name) VALUES ('John') RETURNING id, (SELECT count(*) FROM public.orders WHERE user_id = users.id)"
     end
   end
 
@@ -170,7 +170,7 @@ describe PgQuery, '#qualify' do
 
     it "qualifies tables in UPDATE RETURNING with subquery" do
       query = described_class.qualify("UPDATE users SET name = 'Updated' WHERE id = 1 RETURNING id, (SELECT COUNT(*) FROM orders WHERE user_id = users.id)", "public")
-      expect(query).to eq "UPDATE public.users SET name = 'Updated' WHERE id = 1 RETURNING id, (SELECT count(*) FROM orders WHERE user_id = users.id)"
+      expect(query).to eq "UPDATE public.users SET name = 'Updated' WHERE id = 1 RETURNING id, (SELECT count(*) FROM public.orders WHERE user_id = users.id)"
     end
   end
 
@@ -197,7 +197,7 @@ describe PgQuery, '#qualify' do
 
     it "qualifies tables in DELETE RETURNING with subquery" do
       query = described_class.qualify("DELETE FROM users WHERE id = 1 RETURNING id, (SELECT COUNT(*) FROM orders WHERE user_id = users.id)", "public")
-      expect(query).to eq "DELETE FROM public.users WHERE id = 1 RETURNING id, (SELECT count(*) FROM orders WHERE user_id = users.id)"
+      expect(query).to eq "DELETE FROM public.users WHERE id = 1 RETURNING id, (SELECT count(*) FROM public.orders WHERE user_id = users.id)"
     end
   end
 

@@ -93,6 +93,7 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
             qualify_node((Node *) stmt->relation, schema, stmt_cte_names);
             if (stmt->selectStmt) qualify_node((Node *) stmt->selectStmt, schema, stmt_cte_names);
             if (stmt->onConflictClause) qualify_node((Node *) stmt->onConflictClause, schema, stmt_cte_names);
+            qualify_list(stmt->returningList, schema, stmt_cte_names);
             break;
         }
         case T_UpdateStmt: {
@@ -115,6 +116,7 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
             qualify_list(stmt->fromClause, schema, stmt_cte_names);
             qualify_node((Node *) stmt->whereClause, schema, stmt_cte_names);
             qualify_list(stmt->targetList, schema, stmt_cte_names);
+            qualify_list(stmt->returningList, schema, stmt_cte_names);
             break;
         }
         case T_DeleteStmt: {
@@ -136,6 +138,7 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
             qualify_node((Node *) stmt->relation, schema, stmt_cte_names);
             qualify_list(stmt->usingClause, schema, stmt_cte_names);
             qualify_node((Node *) stmt->whereClause, schema, stmt_cte_names);
+            qualify_list(stmt->returningList, schema, stmt_cte_names);
             break;
         }
         case T_JoinExpr: {
