@@ -68,6 +68,8 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
             qualify_list(stmt->sortClause, schema, stmt_cte_names);
             qualify_list(stmt->targetList, schema, stmt_cte_names);
             qualify_list(stmt->valuesLists, schema, stmt_cte_names);
+            if (stmt->limitCount) qualify_node((Node *) stmt->limitCount, schema, stmt_cte_names);
+            if (stmt->limitOffset) qualify_node((Node *) stmt->limitOffset, schema, stmt_cte_names);
             if (stmt->larg) qualify_node((Node *) stmt->larg, schema, stmt_cte_names);
             if (stmt->rarg) qualify_node((Node *) stmt->rarg, schema, stmt_cte_names);
             break;
@@ -203,13 +205,17 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
             qualify_list(boolexpr->args, schema, cte_names);
             break;
         }
+        case T_CoalesceExpr: {
+            CoalesceExpr *coalesceexpr = (CoalesceExpr *) node;
+            qualify_list(coalesceexpr->args, schema, cte_names);
+            break;
+        }
         case T_ColumnRef:
         case T_A_Const:
         case T_TypeCast:
         case T_NullTest:
         case T_BooleanTest:
         case T_CaseExpr:
-        case T_CoalesceExpr:
         case T_MinMaxExpr:
         case T_A_ArrayExpr:
         case T_RowExpr:

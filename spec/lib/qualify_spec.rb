@@ -204,7 +204,7 @@ describe PgQuery, '#qualify' do
   describe "complex expressions and functions" do
     it "qualifies tables in function calls with subqueries" do
       query = described_class.qualify("SELECT COALESCE((SELECT name FROM users WHERE id = 1), 'Unknown') as user_name FROM profiles", "public")
-      expect(query).to eq "SELECT COALESCE((SELECT name FROM users WHERE id = 1), 'Unknown') AS user_name FROM public.profiles"
+      expect(query).to eq "SELECT COALESCE((SELECT name FROM public.users WHERE id = 1), 'Unknown') AS user_name FROM public.profiles"
     end
 
     it "qualifies tables in CASE expressions with subqueries" do
@@ -402,7 +402,6 @@ describe PgQuery, '#qualify' do
     end
 
     it "should fully qualify tables in LIMIT/OFFSET subqueries" do
-      pending "Tables in LIMIT and OFFSET subqueries should be fully qualified"
       query = described_class.qualify("SELECT * FROM users LIMIT (SELECT COUNT(*) FROM settings WHERE key = 'max_users')", "public")
       expect(query).to eq "SELECT * FROM public.users LIMIT (SELECT count(*) FROM public.settings WHERE key = 'max_users')"
     end
@@ -439,7 +438,6 @@ describe PgQuery, '#qualify' do
 
   describe "pending improvements - advanced expression contexts" do
     it "should fully qualify tables in function call subqueries" do
-      pending "Tables in function call subqueries should be fully qualified"
       query = described_class.qualify("SELECT COALESCE((SELECT name FROM users WHERE id = 1), 'Unknown') FROM profiles", "public")
       expect(query).to eq "SELECT COALESCE((SELECT name FROM public.users WHERE id = 1), 'Unknown') FROM public.profiles"
     end
