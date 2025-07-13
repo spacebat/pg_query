@@ -1,5 +1,10 @@
 # pg_query Ruby Extension Agent Guide
 
+## Goal
+- **Fully qualify unqualified tables in queries**: eg if the qualifying schema is public, then users becomes public.users
+- **Fully qualify unqualified tables in subqueries**: eg if the qualifying schema is public, then users becomes public.users
+- **Leave unqualified column names alone**: the Postgresql parser takes care of resolving these
+
 ## General
 - **Code priority**: Code should be clear and readable first, correct second, and performant third.
 - **Test stability**: Ensure that your changes do not break other tests in the project, unless it is unavoidable.
