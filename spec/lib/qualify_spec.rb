@@ -429,9 +429,8 @@ describe PgQuery, '#qualify' do
     end
 
     it "should fully qualify tables in array subqueries" do
-      pending "Tables in array subqueries should be fully qualified"
       query = described_class.qualify("SELECT ARRAY(SELECT name FROM categories WHERE parent_id = products.category_id) FROM products", "public")
-      expect(query).to eq "SELECT ARRAY(SELECT name FROM public.categories WHERE parent_id = public.products.category_id) FROM public.products"
+      expect(query).to eq "SELECT ARRAY(SELECT name FROM public.categories WHERE parent_id = products.category_id) FROM public.products"
     end
 
     it "should fully qualify tables in aggregate function subqueries" do
