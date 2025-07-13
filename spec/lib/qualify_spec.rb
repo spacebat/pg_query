@@ -121,7 +121,7 @@ describe PgQuery, '#qualify' do
 
     it "qualifies tables in LIMIT and OFFSET with subqueries" do
       query = described_class.qualify("SELECT * FROM users LIMIT (SELECT COUNT(*) FROM settings WHERE key = 'max_users') OFFSET (SELECT COUNT(*) FROM users WHERE active = false)", "public")
-      expect(query).to eq "SELECT * FROM public.users LIMIT (SELECT count(*) FROM settings WHERE key = 'max_users') OFFSET (SELECT count(*) FROM users WHERE active = false)"
+      expect(query).to eq "SELECT * FROM public.users LIMIT (SELECT count(*) FROM public.settings WHERE key = 'max_users') OFFSET (SELECT count(*) FROM public.users WHERE active = false)"
     end
   end
 
