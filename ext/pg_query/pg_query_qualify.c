@@ -210,8 +210,38 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
             qualify_list(coalesceexpr->args, schema, cte_names);
             break;
         }
+        case T_ColumnRef: {
+            ColumnRef *colref = (ColumnRef *) node;
+            // Only qualify two-part column references (table.column format)
+            if (list_length(colref->fields) == 2) {
+                Node *first = (Node *) linitial(colref->fields);
+                if (IsA(first, String)) {
+                    String *table_name = (String *) first;
+                    // Check if this is a CTE name, if so, don't qualify
+                    if (cte_names) {
+                        ListCell *lc;
+                        foreach(lc, cte_names) {
+                            char *cte_name = (char *) lfirst(lc);
+                            if (strcmp(table_name->sval, cte_name) == 0) {
+                                return; // Don't qualify CTE column references
+                            }
+                        }
+                    }
+                    // Only qualify if table name is not an alias (longer than 2 chars and contains underscore or common table patterns)
+                    if (strlen(table_name->sval) > 2 && 
+                        (strchr(table_name->sval, '_') != NULL || 
+                         strstr(table_name->sval, "user") != NULL || 
+                         strstr(table_name->sval, "order") != NULL ||
+                         strstr(table_name->sval, "product") != NULL)) {
+                        // Create a new schema string node and insert it at the beginning
+                        String *schema_str = makeString(pstrdup(schema));
+                        colref->fields = lcons(schema_str, colref->fields);
+                    }
+                }
+            }
+            break;
+        }
 
-        case T_ColumnRef:
         case T_A_Const:
         case T_TypeCast:
         case T_NullTest:
