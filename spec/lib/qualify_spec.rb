@@ -133,7 +133,7 @@ describe PgQuery, '#qualify' do
 
     it "qualifies tables in INSERT with VALUES containing subqueries" do
       query = described_class.qualify("INSERT INTO orders (user_id, product_id) VALUES ((SELECT id FROM users WHERE email = 'test@example.com'), (SELECT id FROM products WHERE name = 'Test Product'))", "public")
-      expect(query).to eq "INSERT INTO public.orders (user_id, product_id) VALUES ((SELECT id FROM users WHERE email = 'test@example.com'), (SELECT id FROM products WHERE name = 'Test Product'))"
+      expect(query).to eq "INSERT INTO public.orders (user_id, product_id) VALUES ((SELECT id FROM public.users WHERE email = 'test@example.com'), (SELECT id FROM public.products WHERE name = 'Test Product'))"
     end
 
     it "qualifies tables in INSERT ON CONFLICT with subquery" do
@@ -409,7 +409,6 @@ describe PgQuery, '#qualify' do
     end
 
     it "should fully qualify tables in INSERT VALUES subqueries" do
-      pending "Tables in INSERT VALUES subqueries should be fully qualified"
       query = described_class.qualify("INSERT INTO orders (user_id, product_id) VALUES ((SELECT id FROM users WHERE email = 'test@example.com'), 1)", "public")
       expect(query).to eq "INSERT INTO public.orders (user_id, product_id) VALUES ((SELECT id FROM public.users WHERE email = 'test@example.com'), 1)"
     end
@@ -490,7 +489,6 @@ describe PgQuery, '#qualify' do
     end
 
     it "should handle VALUES clauses with subqueries" do
-      pending "VALUES clauses with subqueries should be fully qualified"
       query = described_class.qualify("SELECT * FROM users WHERE id IN (VALUES ((SELECT 1)), ((SELECT 2 FROM orders WHERE id = 1)))", "public")
       expect(query).to eq "SELECT * FROM public.users WHERE id IN (VALUES ((SELECT 1)), ((SELECT 2 FROM public.orders WHERE id = 1)))"
     end

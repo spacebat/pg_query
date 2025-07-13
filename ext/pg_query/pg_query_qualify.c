@@ -67,6 +67,7 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
             qualify_list(stmt->groupClause, schema, stmt_cte_names);
             qualify_list(stmt->sortClause, schema, stmt_cte_names);
             qualify_list(stmt->targetList, schema, stmt_cte_names);
+            qualify_list(stmt->valuesLists, schema, stmt_cte_names);
             if (stmt->larg) qualify_node((Node *) stmt->larg, schema, stmt_cte_names);
             if (stmt->rarg) qualify_node((Node *) stmt->rarg, schema, stmt_cte_names);
             break;
@@ -192,6 +193,11 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
             qualify_node(subselect->subquery, schema, cte_names);
             break;
         }
+        case T_List: {
+            List *list = (List *) node;
+            qualify_list(list, schema, cte_names);
+            break;
+        }
         case T_ColumnRef:
         case T_A_Const:
         case T_TypeCast:
@@ -254,7 +260,6 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
         case T_A_Indirection:
         case T_A_Star:
         case T_ParamRef:
-        case T_List:
         case T_IntList:
         case T_OidList:
             // These node types either don't contain table references or are handled elsewhere
