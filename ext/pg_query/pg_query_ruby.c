@@ -3,6 +3,7 @@
 
 #include "xxhash/xxhash.h"
 #include <ruby.h>
+#include <ruby/encoding.h>
 
 void raise_ruby_parse_error(PgQueryProtobufParseResult result);
 void raise_ruby_normalize_error(PgQueryNormalizeResult result);
@@ -244,6 +245,7 @@ VALUE pg_query_ruby_qualify(VALUE self, VALUE sql_str, VALUE schema_str) {
 
 	if (result) {
 		VALUE output = rb_str_new_cstr(result);
+		rb_enc_associate(output, rb_utf8_encoding());
 		free(result);
 		return output;
 	} else {
