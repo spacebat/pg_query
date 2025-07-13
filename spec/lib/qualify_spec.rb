@@ -209,7 +209,7 @@ describe PgQuery, '#qualify' do
 
     it "qualifies tables in CASE expressions with subqueries" do
       query = described_class.qualify("SELECT CASE WHEN (SELECT COUNT(*) FROM orders WHERE user_id = users.id) > 0 THEN 'Active' ELSE 'Inactive' END FROM users", "public")
-      expect(query).to eq "SELECT CASE WHEN (SELECT count(*) FROM orders WHERE user_id = users.id) > 0 THEN 'Active' ELSE 'Inactive' END FROM public.users"
+      expect(query).to eq "SELECT CASE WHEN (SELECT count(*) FROM public.orders WHERE user_id = users.id) > 0 THEN 'Active' ELSE 'Inactive' END FROM public.users"
     end
 
     it "qualifies tables in array expressions with subqueries" do
@@ -402,7 +402,6 @@ describe PgQuery, '#qualify' do
     end
 
     it "should fully qualify tables in RETURNING subqueries" do
-      pending "Tables in RETURNING subqueries should be fully qualified"
       query = described_class.qualify("INSERT INTO users (name) VALUES ('John') RETURNING id, (SELECT COUNT(*) FROM orders WHERE user_id = users.id)", "public")
       expect(query).to eq "INSERT INTO public.users (name) VALUES ('John') RETURNING id, (SELECT count(*) FROM public.orders WHERE user_id = users.id)"
     end
@@ -425,7 +424,6 @@ describe PgQuery, '#qualify' do
     end
 
     it "should fully qualify tables in CASE expression subqueries" do
-      pending "Tables in CASE expression subqueries should be fully qualified"
       query = described_class.qualify("SELECT CASE WHEN (SELECT COUNT(*) FROM orders WHERE user_id = users.id) > 0 THEN 'Active' ELSE 'Inactive' END FROM users", "public")
       expect(query).to eq "SELECT CASE WHEN (SELECT count(*) FROM public.orders WHERE user_id = users.id) > 0 THEN 'Active' ELSE 'Inactive' END FROM public.users"
     end
