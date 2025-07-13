@@ -353,40 +353,10 @@ describe PgQuery, '#qualify' do
     end
   end
 
-  describe "pending improvements - column reference qualification" do
-    it "should qualify column references in WHERE clauses" do
-      pending "Column references like 'users.id' should be qualified to 'public.users.id'"
-      query = described_class.qualify("SELECT * FROM users WHERE users.active = true", "public")
-      expect(query).to eq "SELECT * FROM public.users WHERE public.users.active = true"
-    end
-
-    it "should qualify column references in subqueries" do
-      pending "Column references in subqueries should be fully qualified"
-      query = described_class.qualify("SELECT * FROM users WHERE id IN (SELECT user_id FROM orders WHERE orders.user_id = users.id)", "public")
-      expect(query).to eq "SELECT * FROM public.users WHERE id IN (SELECT user_id FROM public.orders WHERE public.orders.user_id = public.users.id)"
-    end
-
-    it "should qualify column references in UPDATE FROM clauses" do
-      pending "Column references in UPDATE FROM clauses should be fully qualified"
-      query = described_class.qualify("UPDATE users SET name = profiles.display_name FROM profiles WHERE users.id = profiles.user_id", "public")
-      expect(query).to eq "UPDATE public.users SET name = profiles.display_name FROM public.profiles WHERE public.users.id = profiles.user_id"
-    end
-
-    it "should qualify column references in DELETE USING clauses" do
-      pending "Column references in DELETE USING clauses should be fully qualified"
-      query = described_class.qualify("DELETE FROM users USING profiles WHERE users.id = profiles.user_id AND profiles.active = false", "public")
-      expect(query).to eq "DELETE FROM public.users USING public.profiles WHERE public.users.id = profiles.user_id AND profiles.active = false"
-    end
-
+  describe "JOIN conditions" do
     it "should qualify column references in JOIN conditions" do
       query = described_class.qualify("SELECT * FROM users u JOIN orders o ON u.id = o.user_id WHERE u.active = true", "public")
       expect(query).to eq "SELECT * FROM public.users u JOIN public.orders o ON u.id = o.user_id WHERE u.active = true"
-    end
-
-    it "should qualify column references in aggregate functions" do
-      pending "Column references in aggregate functions should be fully qualified"
-      query = described_class.qualify("SELECT COUNT(*) FROM users WHERE users.created_at > '2023-01-01'", "public")
-      expect(query).to eq "SELECT count(*) FROM public.users WHERE public.users.created_at > '2023-01-01'"
     end
   end
 
