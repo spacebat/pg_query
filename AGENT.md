@@ -1,5 +1,9 @@
 # pg_query Ruby Extension Agent Guide
 
+## General
+- **Code priority**: Code should be clear and readable first, correct second, and performant third.
+- **Test stability**: Ensure that your changes do not break other tests in the project, unless it is unavoidable. 
+
 ## Commands
 - **Build**: `rake compile` (compiles C extension)
 - **Test**: `rake spec` or `bundle exec rspec`

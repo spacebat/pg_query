@@ -424,7 +424,6 @@ describe PgQuery, '#qualify' do
     end
 
     it "should fully qualify tables in UPDATE SET subqueries" do
-      pending "Tables in UPDATE SET subqueries should be fully qualified"
       query = described_class.qualify("UPDATE users SET order_count = (SELECT COUNT(*) FROM orders WHERE user_id = users.id)", "public")
       expect(query).to eq "UPDATE public.users SET order_count = (SELECT count(*) FROM public.orders WHERE user_id = public.users.id)"
     end
