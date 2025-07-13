@@ -351,6 +351,21 @@ describe PgQuery, '#qualify' do
       )
       expect(query).to eq "WITH user_stats AS (SELECT * FROM analytics.users) SELECT * FROM user_stats"
     end
+
+    it "properly quotes ASCII-encoded UUID schema names" do
+      uuid_schema = "123e4567-e89b-12d3-a456-426614174000"
+      query = described_class.qualify("SELECT * FROM users WHERE users.id = 1", uuid_schema)
+      expect(query).to eq 'SELECT * FROM "123e4567-e89b-12d3-a456-426614174000".users WHERE users.id = 1'
+    end
+
+    it "quotes UUID schemas in complex queries with subqueries" do
+      uuid_schema = "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+      query = described_class.qualify(
+        "UPDATE users SET name = (SELECT name FROM profiles WHERE user_id = users.id)",
+        uuid_schema
+      )
+      expect(query).to eq 'UPDATE "f47ac10b-58cc-4372-a567-0e02b2c3d479".users SET name = (SELECT name FROM "f47ac10b-58cc-4372-a567-0e02b2c3d479".profiles WHERE user_id = users.id)'
+    end
   end
 
   describe "JOIN conditions" do
