@@ -451,9 +451,8 @@ describe PgQuery, '#qualify' do
 
   describe "pending improvements - advanced SQL features" do
     it "should handle table-valued functions properly" do
-      pending "Table-valued functions should be handled correctly"
       query = described_class.qualify("SELECT * FROM users u, generate_series(1, (SELECT COUNT(*) FROM orders)) AS s", "public")
-      expect(query).to eq "SELECT * FROM public.users u, generate_series(1, (SELECT count(*) FROM public.orders)) AS s"
+      expect(query).to eq "SELECT * FROM public.users u, generate_series(1, (SELECT count(*) FROM public.orders)) s"
     end
 
     it "should handle lateral joins with subqueries" do

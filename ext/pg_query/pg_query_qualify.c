@@ -244,6 +244,14 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
             qualify_node(windef->endOffset, schema, cte_names);
             break;
         }
+        case T_RangeFunction: {
+            RangeFunction *rangeFunc = (RangeFunction *) node;
+            /* Traverse the functions list which contains function calls */
+            qualify_list(rangeFunc->functions, schema, cte_names);
+            /* Traverse the column definition list if present */
+            qualify_list(rangeFunc->coldeflist, schema, cte_names);
+            break;
+        }
         case T_ColumnRef:
         case T_A_Const:
         case T_TypeCast:
@@ -257,7 +265,6 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
         case T_ArrayCoerceExpr:
         case T_ConvertRowtypeExpr:
         case T_CollateExpr:
-        case T_RangeFunction:
         case T_TypeName:
         case T_ColumnDef:
         case T_IndexElem:
