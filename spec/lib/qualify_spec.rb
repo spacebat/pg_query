@@ -466,7 +466,7 @@ describe PgQuery, '#qualify' do
     end
 
     it "should handle stored procedure calls with table parameters" do
-      pending "Stored procedure calls with table parameters should be qualified"
+      # pending "Stored procedure calls with table parameters should be qualified"
       query = described_class.qualify("SELECT * FROM my_function((SELECT * FROM users WHERE active = true))", "public")
       expect(query).to eq "SELECT * FROM my_function((SELECT * FROM public.users WHERE active = true))"
     end
@@ -525,9 +525,8 @@ describe PgQuery, '#qualify' do
     end
 
     it "should handle unicode table names" do
-      pending "Unicode table names should be handled correctly"
       query = described_class.qualify("SELECT * FROM ユーザー", "public")
-      expect(query).to eq "SELECT * FROM public.ユーザー"
+      expect(query).to eq "SELECT * FROM public.\"ユーザー\""
     end
   end
 end
