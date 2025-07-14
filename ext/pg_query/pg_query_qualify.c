@@ -233,6 +233,17 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
             qualify_node((Node *) casewhen->result, schema, cte_names);
             break;
         }
+        case T_WindowDef: {
+            WindowDef *windef = (WindowDef *) node;
+            /* PARTITION BY (...) */
+            qualify_list(windef->partitionClause, schema, cte_names);
+            /* ORDER BY (...) (list of SortBy, each of which we already recurse into) */
+            qualify_list(windef->orderClause, schema, cte_names);
+            /* frame bound expressions such as 'RANGE BETWEEN ...' */
+            qualify_node(windef->startOffset, schema, cte_names);
+            qualify_node(windef->endOffset, schema, cte_names);
+            break;
+        }
         case T_ColumnRef:
         case T_A_Const:
         case T_TypeCast:
@@ -246,7 +257,6 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
         case T_ArrayCoerceExpr:
         case T_ConvertRowtypeExpr:
         case T_CollateExpr:
-        case T_WindowDef:
         case T_RangeFunction:
         case T_TypeName:
         case T_ColumnDef:

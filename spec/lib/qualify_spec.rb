@@ -439,7 +439,6 @@ describe PgQuery, '#qualify' do
     end
 
     it "should fully qualify tables in window function subqueries" do
-      pending "Tables in window function subqueries should be fully qualified"
       query = described_class.qualify("SELECT ROW_NUMBER() OVER (ORDER BY (SELECT created_at FROM profiles WHERE user_id = users.id)) FROM users", "public")
       expect(query).to eq "SELECT row_number() OVER (ORDER BY (SELECT created_at FROM public.profiles WHERE user_id = users.id)) FROM public.users"
     end
