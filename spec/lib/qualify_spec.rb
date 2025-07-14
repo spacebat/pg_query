@@ -528,5 +528,10 @@ describe PgQuery, '#qualify' do
       query = described_class.qualify("SELECT * FROM ユーザー", "public")
       expect(query).to eq "SELECT * FROM public.\"ユーザー\""
     end
+
+    it "should only qualify unqualified tables when query has mixed qualified/unqualified tables" do
+      query = described_class.qualify("SELECT * FROM other_schema.qualified_table, unqualified_table", "public")
+      expect(query).to eq "SELECT * FROM other_schema.qualified_table, public.unqualified_table"
+    end
   end
 end
