@@ -444,9 +444,8 @@ describe PgQuery, '#qualify' do
     end
 
     it "should fully qualify tables in complex nested expressions" do
-      pending "Tables in complex nested expressions should be fully qualified"
       query = described_class.qualify("SELECT * FROM users WHERE id = ANY(SELECT user_id FROM orders WHERE product_id = ANY(SELECT id FROM products WHERE category_id = 1))", "public")
-      expect(query).to eq "SELECT * FROM public.users WHERE id = ANY(SELECT user_id FROM public.orders WHERE product_id = ANY(SELECT id FROM public.products WHERE category_id = 1))"
+      expect(query).to eq "SELECT * FROM public.users WHERE id = ANY (SELECT user_id FROM public.orders WHERE product_id = ANY (SELECT id FROM public.products WHERE category_id = 1))"
     end
   end
 
