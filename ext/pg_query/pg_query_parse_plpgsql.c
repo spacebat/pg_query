@@ -324,7 +324,7 @@ PgQueryInternalPlpgsqlFuncAndError pg_query_raw_parse_plpgsql(Node* stmt)
 	if (pipe(stderr_pipe) != 0) {
 		PgQueryError* error = malloc(sizeof(PgQueryError));
 
-		error->message = strdup("Failed to open pipe, too many open file descriptors")
+		error->message = strdup("Failed to open pipe, too many open file descriptors");
 
 		result.error = error;
 

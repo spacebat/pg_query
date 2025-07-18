@@ -36,7 +36,7 @@ PgQuerySplitResult pg_query_split_with_scanner(const char* input)
   if (pipe(stderr_pipe) != 0) {
     PgQueryError* error = malloc(sizeof(PgQueryError));
 
-    error->message = strdup("Failed to open pipe, too many open file descriptors")
+    error->message = strdup("Failed to open pipe, too many open file descriptors");
 
     result.error = error;
 
