@@ -7,8 +7,12 @@
 #include "nodes/parsenodes.h"
 #include "nodes/pg_list.h"
 #include "utils/memutils.h"
+#include "miscadmin.h"
 
 static void qualify_rangevar(RangeVar *rv, const char *schema, List *cte_names) {
+    // Safety check: ensure rv and rv->relname are not NULL
+    if (!rv || !rv->relname) return;
+
     // Check if this is a CTE name, if so, remove any schema qualification
     if (cte_names) {
         ListCell *lc;
@@ -40,6 +44,9 @@ static void qualify_list(List *list, const char *schema, List *cte_names) {
 static void qualify_node(Node *node, const char *schema, List *cte_names) {
     if (!node) return;
 
+    // Prevent stack overflow from deeply nested SQL
+    check_stack_depth();
+
     switch (nodeTag(node)) {
         case T_RangeVar:
             qualify_rangevar((RangeVar *) node, schema, cte_names);
@@ -57,7 +64,7 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
                     CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
                     new_cte_names = lappend(new_cte_names, cte->ctename);
                 }
-                stmt_cte_names = list_concat(cte_names, new_cte_names);
+                stmt_cte_names = list_concat(list_copy(cte_names), new_cte_names);
                 qualify_node((Node *) stmt->withClause, schema, stmt_cte_names);
             }
 
@@ -86,7 +93,7 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
                     CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
                     new_cte_names = lappend(new_cte_names, cte->ctename);
                 }
-                stmt_cte_names = list_concat(cte_names, new_cte_names);
+                stmt_cte_names = list_concat(list_copy(cte_names), new_cte_names);
                 qualify_node((Node *) stmt->withClause, schema, stmt_cte_names);
             }
 
@@ -108,7 +115,7 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
                     CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
                     new_cte_names = lappend(new_cte_names, cte->ctename);
                 }
-                stmt_cte_names = list_concat(cte_names, new_cte_names);
+                stmt_cte_names = list_concat(list_copy(cte_names), new_cte_names);
                 qualify_node((Node *) stmt->withClause, schema, stmt_cte_names);
             }
 
@@ -131,7 +138,7 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
                     CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
                     new_cte_names = lappend(new_cte_names, cte->ctename);
                 }
-                stmt_cte_names = list_concat(cte_names, new_cte_names);
+                stmt_cte_names = list_concat(list_copy(cte_names), new_cte_names);
                 qualify_node((Node *) stmt->withClause, schema, stmt_cte_names);
             }
 
@@ -326,6 +333,9 @@ char* pg_query_qualify_sql(const char *sql, const char *schema) {
     ListCell *lc;
     char *result = NULL;
     MemoryContext ctx;
+
+    // Safety check: ensure schema is not NULL
+    if (!schema) return NULL;
 
     // Parse the SQL into protobuf
     parse_result = pg_query_parse_protobuf(sql);
