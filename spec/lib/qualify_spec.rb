@@ -487,6 +487,38 @@ describe PgQuery, '#qualify' do
     end
   end
 
+  describe "CREATE FUNCTION support" do
+    it "qualifies table references in SQL function bodies" do
+      sql = "CREATE FUNCTION get_user_orders(user_id int) RETURNS TABLE(order_id int, amount decimal) AS $$ SELECT id, amount FROM orders WHERE user_id = $1 $$ LANGUAGE SQL"
+      query = described_class.qualify(sql, "public")
+      expect(query).to eq "CREATE FUNCTION get_user_orders(user_id int) RETURNS TABLE (order_id int, amount numeric) AS $$SELECT id, amount FROM public.orders WHERE user_id = $1$$ LANGUAGE sql"
+    end
+
+    it "qualifies table references in simple SQL function bodies" do
+      sql = "CREATE FUNCTION get_user_count() RETURNS int AS $$ SELECT COUNT(*) FROM users $$ LANGUAGE SQL"
+      query = described_class.qualify(sql, "public")
+      expect(query).to eq "CREATE FUNCTION get_user_count() RETURNS int AS $$SELECT count(*) FROM public.users$$ LANGUAGE sql"
+    end
+
+    it "qualifies table references in SQL functions with JOINs" do
+      sql = "CREATE FUNCTION get_user_orders_with_products(user_id int) RETURNS TABLE(order_id int, product_name text) AS $$ SELECT o.id, p.name FROM orders o JOIN products p ON o.product_id = p.id WHERE o.user_id = $1 $$ LANGUAGE SQL"
+      query = described_class.qualify(sql, "public")
+      expect(query).to eq "CREATE FUNCTION get_user_orders_with_products(user_id int) RETURNS TABLE (order_id int, product_name text) AS $$SELECT o.id, p.name FROM public.orders o JOIN public.products p ON o.product_id = p.id WHERE o.user_id = $1$$ LANGUAGE sql"
+    end
+
+    it "qualifies table references in SQL functions with subqueries" do
+      sql = "CREATE FUNCTION get_active_users() RETURNS TABLE(user_id int) AS $$ SELECT id FROM users WHERE id IN (SELECT user_id FROM orders WHERE status = 'active') $$ LANGUAGE SQL"
+      query = described_class.qualify(sql, "public")
+      expect(query).to eq "CREATE FUNCTION get_active_users() RETURNS TABLE (user_id int) AS $$SELECT id FROM public.users WHERE id IN (SELECT user_id FROM public.orders WHERE status = 'active')$$ LANGUAGE sql"
+    end
+
+    it "preserves already qualified tables in function bodies" do
+      sql = "CREATE FUNCTION get_user_orders(user_id int) RETURNS TABLE(order_id int) AS $$ SELECT id FROM other_schema.orders WHERE user_id = $1 $$ LANGUAGE SQL"
+      query = described_class.qualify(sql, "public")
+      expect(query).to eq "CREATE FUNCTION get_user_orders(user_id int) RETURNS TABLE (order_id int) AS $$SELECT id FROM other_schema.orders WHERE user_id = $1$$ LANGUAGE sql"
+    end
+  end
+
   describe "pending improvements - edge cases and error handling" do
     it "should handle circular schema references gracefully" do
       query = described_class.qualify("SELECT * FROM public.users", "public")
