@@ -244,10 +244,10 @@ describe PgQuery, '#qualify' do
 
     it "handles recursive CTEs" do
       query = described_class.qualify(
-        "WITH RECURSIVE category_tree AS (SELECT id, name, parent_id FROM categories WHERE parent_id IS NULL UNION ALL SELECT c.id, c.name, c.parent_id FROM categories c JOIN category_tree ct ON c.parent_id = ct.id) SELECT * FROM category_tree",
+        "WITH RECURSIVE tree AS (SELECT id, parent_id FROM categories WHERE parent_id IS NULL UNION ALL SELECT c.id, c.parent_id FROM categories c JOIN tree ct ON c.parent_id = ct.id) SELECT * FROM tree",
         "public"
       )
-      expect(query).to eq "WITH RECURSIVE category_tree AS (SELECT id, name, parent_id FROM public.categories WHERE parent_id IS NULL UNION ALL SELECT c.id, c.name, c.parent_id FROM public.categories c JOIN category_tree ct ON c.parent_id = ct.id) SELECT * FROM category_tree"
+      expect(query).to eq "WITH RECURSIVE tree AS (SELECT id, parent_id FROM public.categories WHERE parent_id IS NULL UNION ALL SELECT c.id, c.parent_id FROM public.categories c JOIN tree ct ON c.parent_id = ct.id) SELECT * FROM tree"
     end
 
     it "handles CTEs with JOINs inside" do
@@ -296,6 +296,30 @@ describe PgQuery, '#qualify' do
         "public"
       )
       expect(query).to eq "WITH user_stats AS (SELECT * FROM other_schema.users) SELECT * FROM user_stats"
+    end
+
+    it "qualifies tables with same name as CTE within CTE body" do
+      query = described_class.qualify(
+        "WITH shifts AS (select * from shifts limit 5) select id from shifts",
+        "public"
+      )
+      expect(query).to eq "WITH shifts AS (SELECT * FROM public.shifts LIMIT 5) SELECT id FROM shifts"
+    end
+
+    it "qualifies tables with same name as CTE in multiple CTEs" do
+      query = described_class.qualify(
+        "WITH orders AS (select * from orders where status = 'pending'), users AS (select * from users where active = true) select * from orders join users on orders.user_id = users.id",
+        "public"
+      )
+      expect(query).to eq "WITH orders AS (SELECT * FROM public.orders WHERE status = 'pending'), users AS (SELECT * FROM public.users WHERE active = true) SELECT * FROM orders JOIN users ON orders.user_id = users.id"
+    end
+
+    it "preserves existing behavior for recursive CTEs with same table name as CTE" do
+      query = described_class.qualify(
+        "WITH RECURSIVE tree AS (SELECT id, parent_id, name FROM tree WHERE parent_id IS NULL UNION ALL SELECT t.id, t.parent_id, t.name FROM tree t JOIN tree tr ON t.parent_id = tr.id) SELECT * FROM tree",
+        "public"
+      )
+      expect(query).to eq "WITH RECURSIVE tree AS (SELECT id, parent_id, name FROM tree WHERE parent_id IS NULL UNION ALL SELECT t.id, t.parent_id, t.name FROM tree t JOIN tree tr ON t.parent_id = tr.id) SELECT * FROM tree"
     end
 
     it "handles CTEs that reference regular tables and other CTEs" do

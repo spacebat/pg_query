@@ -9,6 +9,8 @@
 #include "utils/memutils.h"
 #include "miscadmin.h"
 
+
+
 static void qualify_rangevar(RangeVar *rv, const char *schema, List *cte_names) {
     // Safety check: ensure rv and rv->relname are not NULL
     if (!rv || !rv->relname) return;
@@ -85,17 +87,33 @@ static void qualify_node(Node *node, const char *schema, List *cte_names, const 
             SelectStmt *stmt = (SelectStmt *) node;
             List *stmt_cte_names = cte_names;
 
-            // If this statement has a WITH clause, collect CTE names
+            // If this statement has a WITH clause, process it with proper scoping
             if (stmt->withClause) {
                 WithClause *with = (WithClause *) stmt->withClause;
-                List *new_cte_names = NIL;
+                List *local_cte_names = list_copy(cte_names);
                 ListCell *lc;
-                foreach(lc, with->ctes) {
-                    CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
-                    new_cte_names = lappend(new_cte_names, cte->ctename);
+
+                if (with->recursive) {
+                    // WITH RECURSIVE: Add all CTE names to scope before processing any definition
+                    foreach(lc, with->ctes) {
+                        CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+                        local_cte_names = lappend(local_cte_names, cte->ctename);
+                    }
+
+                    // Now process each CTE with all names in scope
+                    foreach(lc, with->ctes) {
+                        CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+                        qualify_node(cte->ctequery, schema, local_cte_names, func_names, func_count);
+                    }
+                } else {
+                    // WITH (non-recursive): Process definition first, then add name to scope
+                    foreach(lc, with->ctes) {
+                        CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+                        qualify_node(cte->ctequery, schema, local_cte_names, func_names, func_count);
+                        local_cte_names = lappend(local_cte_names, cte->ctename);
+                    }
                 }
-                stmt_cte_names = list_concat(list_copy(cte_names), new_cte_names);
-                qualify_node((Node *) stmt->withClause, schema, stmt_cte_names, func_names, func_count);
+                stmt_cte_names = local_cte_names;
             }
 
             qualify_list(stmt->fromClause, schema, stmt_cte_names, func_names, func_count);
@@ -117,14 +135,26 @@ static void qualify_node(Node *node, const char *schema, List *cte_names, const 
 
             if (stmt->withClause) {
                 WithClause *with = (WithClause *) stmt->withClause;
-                List *new_cte_names = NIL;
+                List *local_cte_names = list_copy(cte_names);
                 ListCell *lc;
-                foreach(lc, with->ctes) {
-                    CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
-                    new_cte_names = lappend(new_cte_names, cte->ctename);
+
+                if (with->recursive) {
+                    foreach(lc, with->ctes) {
+                        CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+                        local_cte_names = lappend(local_cte_names, cte->ctename);
+                    }
+                    foreach(lc, with->ctes) {
+                        CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+                        qualify_node(cte->ctequery, schema, local_cte_names, func_names, func_count);
+                    }
+                } else {
+                    foreach(lc, with->ctes) {
+                        CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+                        qualify_node(cte->ctequery, schema, local_cte_names, func_names, func_count);
+                        local_cte_names = lappend(local_cte_names, cte->ctename);
+                    }
                 }
-                stmt_cte_names = list_concat(list_copy(cte_names), new_cte_names);
-                qualify_node((Node *) stmt->withClause, schema, stmt_cte_names, func_names, func_count);
+                stmt_cte_names = local_cte_names;
             }
 
             qualify_node((Node *) stmt->relation, schema, stmt_cte_names, func_names, func_count);
@@ -139,14 +169,26 @@ static void qualify_node(Node *node, const char *schema, List *cte_names, const 
 
             if (stmt->withClause) {
                 WithClause *with = (WithClause *) stmt->withClause;
-                List *new_cte_names = NIL;
+                List *local_cte_names = list_copy(cte_names);
                 ListCell *lc;
-                foreach(lc, with->ctes) {
-                    CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
-                    new_cte_names = lappend(new_cte_names, cte->ctename);
+
+                if (with->recursive) {
+                    foreach(lc, with->ctes) {
+                        CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+                        local_cte_names = lappend(local_cte_names, cte->ctename);
+                    }
+                    foreach(lc, with->ctes) {
+                        CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+                        qualify_node(cte->ctequery, schema, local_cte_names, func_names, func_count);
+                    }
+                } else {
+                    foreach(lc, with->ctes) {
+                        CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+                        qualify_node(cte->ctequery, schema, local_cte_names, func_names, func_count);
+                        local_cte_names = lappend(local_cte_names, cte->ctename);
+                    }
                 }
-                stmt_cte_names = list_concat(list_copy(cte_names), new_cte_names);
-                qualify_node((Node *) stmt->withClause, schema, stmt_cte_names, func_names, func_count);
+                stmt_cte_names = local_cte_names;
             }
 
             qualify_node((Node *) stmt->relation, schema, stmt_cte_names, func_names, func_count);
@@ -162,14 +204,26 @@ static void qualify_node(Node *node, const char *schema, List *cte_names, const 
 
             if (stmt->withClause) {
                 WithClause *with = (WithClause *) stmt->withClause;
-                List *new_cte_names = NIL;
+                List *local_cte_names = list_copy(cte_names);
                 ListCell *lc;
-                foreach(lc, with->ctes) {
-                    CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
-                    new_cte_names = lappend(new_cte_names, cte->ctename);
+
+                if (with->recursive) {
+                    foreach(lc, with->ctes) {
+                        CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+                        local_cte_names = lappend(local_cte_names, cte->ctename);
+                    }
+                    foreach(lc, with->ctes) {
+                        CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+                        qualify_node(cte->ctequery, schema, local_cte_names, func_names, func_count);
+                    }
+                } else {
+                    foreach(lc, with->ctes) {
+                        CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+                        qualify_node(cte->ctequery, schema, local_cte_names, func_names, func_count);
+                        local_cte_names = lappend(local_cte_names, cte->ctename);
+                    }
                 }
-                stmt_cte_names = list_concat(list_copy(cte_names), new_cte_names);
-                qualify_node((Node *) stmt->withClause, schema, stmt_cte_names, func_names, func_count);
+                stmt_cte_names = local_cte_names;
             }
 
             qualify_node((Node *) stmt->relation, schema, stmt_cte_names, func_names, func_count);
@@ -227,13 +281,14 @@ static void qualify_node(Node *node, const char *schema, List *cte_names, const 
             break;
         }
         case T_WithClause: {
-            WithClause *with = (WithClause *) node;
-            qualify_list(with->ctes, schema, cte_names, func_names, func_count);
+            // WithClause is now handled directly in each statement type
+            // This case should not be reached
             break;
         }
         case T_CommonTableExpr: {
             CommonTableExpr *cte = (CommonTableExpr *) node;
-            // Only qualify the CTE query, not the CTE name itself
+            // This case should not normally be reached directly since
+            // CTEs are processed through T_WithClause
             qualify_node(cte->ctequery, schema, cte_names, func_names, func_count);
             break;
         }
@@ -516,6 +571,7 @@ char* pg_query_qualify_sql_with_funcs(const char *sql, const char *schema, const
 
     PG_TRY();
     {
+
         // Convert protobuf to AST nodes
         stmts = pg_query_protobuf_to_nodes(parse_result.parse_tree);
 
