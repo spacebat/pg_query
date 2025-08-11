@@ -671,4 +671,56 @@ describe PgQuery, '#qualify' do
       expect(query).to eq "UPDATE public.users SET active = true WHERE id = 1"
     end
   end
+
+  describe "function qualification with qualify_with_funcs" do
+    it "qualifies exact function name matches" do
+      query = described_class.qualify_with_funcs("SELECT my_func(col1) FROM users", "public", ["my_func"])
+      expect(query).to eq "SELECT public.my_func(col1) FROM public.users"
+    end
+
+    it "qualifies function names with prefix patterns" do
+      query = described_class.qualify_with_funcs("SELECT lz_compress(data), lz_decompress(data) FROM logs", "public", ["lz_%"])
+      expect(query).to eq "SELECT public.lz_compress(data), public.lz_decompress(data) FROM public.logs"
+    end
+
+    it "does not qualify functions not in the list" do
+      query = described_class.qualify_with_funcs("SELECT my_func(col1), other_func(col2) FROM users", "public", ["my_func"])
+      expect(query).to eq "SELECT public.my_func(col1), other_func(col2) FROM public.users"
+    end
+
+    it "handles multiple function name patterns" do
+      query = described_class.qualify_with_funcs("SELECT custom_log(msg), lz_compress(data), encrypt_data(val) FROM logs", "public", ["custom_%", "lz_%", "encrypt_data"])
+      expect(query).to eq "SELECT public.custom_log(msg), public.lz_compress(data), public.encrypt_data(val) FROM public.logs"
+    end
+
+    it "does not qualify already qualified function names" do
+      query = described_class.qualify_with_funcs("SELECT my_schema.my_func(col1) FROM users", "public", ["my_func"])
+      expect(query).to eq "SELECT my_schema.my_func(col1) FROM public.users"
+    end
+
+    it "works with empty function list" do
+      query = described_class.qualify_with_funcs("SELECT my_func(col1) FROM users", "public", [])
+      expect(query).to eq "SELECT my_func(col1) FROM public.users"
+    end
+
+    it "qualifies functions in nested contexts" do
+      query = described_class.qualify_with_funcs("SELECT * FROM users WHERE id IN (SELECT user_id FROM logs WHERE my_func(data) > 100)", "public", ["my_func"])
+      expect(query).to eq "SELECT * FROM public.users WHERE id IN (SELECT user_id FROM public.logs WHERE public.my_func(data) > 100)"
+    end
+
+    it "qualifies aggregate functions" do
+      query = described_class.qualify_with_funcs("SELECT custom_sum(amount) FROM orders GROUP BY user_id", "public", ["custom_sum"])
+      expect(query).to eq "SELECT public.custom_sum(amount) FROM public.orders GROUP BY user_id"
+    end
+
+    it "qualifies window functions" do
+      query = described_class.qualify_with_funcs("SELECT custom_rank() OVER (ORDER BY amount) FROM orders", "public", ["custom_rank"])
+      expect(query).to eq "SELECT public.custom_rank() OVER (ORDER BY amount) FROM public.orders"
+    end
+
+    it "handles case sensitivity in function names" do
+      query = described_class.qualify_with_funcs("SELECT My_Func(col1) FROM users", "public", ["my_func"])
+      expect(query).to eq "SELECT public.my_func(col1) FROM public.users"
+    end
+  end
 end

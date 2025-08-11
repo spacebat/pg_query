@@ -17,6 +17,7 @@ VALUE pg_query_ruby_fingerprint(VALUE self, VALUE input);
 VALUE pg_query_ruby_scan(VALUE self, VALUE input);
 VALUE pg_query_ruby_hash_xxh3_64(VALUE self, VALUE input, VALUE seed);
 VALUE pg_query_ruby_qualify(VALUE self, VALUE sql_str, VALUE schema_str);
+VALUE pg_query_ruby_qualify_with_funcs(VALUE self, VALUE sql_str, VALUE schema_str, VALUE func_names_array);
 
 __attribute__((visibility ("default"))) void Init_pg_query(void)
 {
@@ -31,6 +32,7 @@ __attribute__((visibility ("default"))) void Init_pg_query(void)
 	rb_define_singleton_method(cPgQuery, "_raw_scan", pg_query_ruby_scan, 1);
 	rb_define_singleton_method(cPgQuery, "hash_xxh3_64", pg_query_ruby_hash_xxh3_64, 2);
 	rb_define_singleton_method(cPgQuery, "qualify", pg_query_ruby_qualify, 2);
+	rb_define_singleton_method(cPgQuery, "qualify_with_funcs", pg_query_ruby_qualify_with_funcs, 3);
 	rb_define_const(cPgQuery, "PG_VERSION", rb_str_new2(PG_VERSION));
 	rb_define_const(cPgQuery, "PG_MAJORVERSION", rb_str_new2(PG_MAJORVERSION));
 	rb_define_const(cPgQuery, "PG_VERSION_NUM", INT2NUM(PG_VERSION_NUM));
@@ -242,6 +244,43 @@ VALUE pg_query_ruby_qualify(VALUE self, VALUE sql_str, VALUE schema_str) {
 	const char* schema = StringValueCStr(schema_str);
 
 	char* result = pg_query_qualify_sql(sql, schema);
+
+	if (result) {
+		VALUE output = rb_str_new_cstr(result);
+		rb_enc_associate(output, rb_utf8_encoding());
+		free(result);
+		return output;
+	} else {
+		return Qnil;
+	}
+}
+
+VALUE pg_query_ruby_qualify_with_funcs(VALUE self, VALUE sql_str, VALUE schema_str, VALUE func_names_array) {
+	Check_Type(sql_str, T_STRING);
+	Check_Type(schema_str, T_STRING);
+	Check_Type(func_names_array, T_ARRAY);
+
+	const char* sql = StringValueCStr(sql_str);
+	const char* schema = StringValueCStr(schema_str);
+
+	// Convert Ruby array to C array
+	int func_count = RARRAY_LEN(func_names_array);
+	const char** func_names = NULL;
+
+	if (func_count > 0) {
+		func_names = malloc(func_count * sizeof(char*));
+		for (int i = 0; i < func_count; i++) {
+			VALUE func_name_val = rb_ary_entry(func_names_array, i);
+			Check_Type(func_name_val, T_STRING);
+			func_names[i] = StringValueCStr(func_name_val);
+		}
+	}
+
+	char* result = pg_query_qualify_sql_with_funcs(sql, schema, func_names, func_count);
+
+	if (func_names) {
+		free(func_names);
+	}
 
 	if (result) {
 		VALUE output = rb_str_new_cstr(result);

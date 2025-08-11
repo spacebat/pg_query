@@ -36,19 +36,42 @@ static void qualify_rangevar(RangeVar *rv, const char *schema, List *cte_names) 
     }
 }
 
-static void qualify_node(Node *node, const char *schema, List *cte_names);
+static void qualify_node(Node *node, const char *schema, List *cte_names, const char **func_names, int func_count);
 
 char* pg_query_qualify_sql(const char *sql, const char *schema);
 
-static void qualify_list(List *list, const char *schema, List *cte_names) {
+// Helper function to check if a function name should be qualified
+static bool should_qualify_function(const char *func_name, const char **func_names, int func_count) {
+    if (!func_names || func_count == 0) return false;
+
+    for (int i = 0; i < func_count; i++) {
+        const char *pattern = func_names[i];
+        int pattern_len = strlen(pattern);
+
+        // Check for prefix match with %
+        if (pattern_len > 0 && pattern[pattern_len - 1] == '%') {
+            if (strncmp(func_name, pattern, pattern_len - 1) == 0) {
+                return true;
+            }
+        } else {
+            // Exact match
+            if (strcmp(func_name, pattern) == 0) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static void qualify_list(List *list, const char *schema, List *cte_names, const char **func_names, int func_count) {
     ListCell *lc;
     foreach(lc, list) {
         Node *n = (Node *) lfirst(lc);
-        qualify_node(n, schema, cte_names);
+        qualify_node(n, schema, cte_names, func_names, func_count);
     }
 }
 
-static void qualify_node(Node *node, const char *schema, List *cte_names) {
+static void qualify_node(Node *node, const char *schema, List *cte_names, const char **func_names, int func_count) {
     if (!node) return;
 
     // Prevent stack overflow from deeply nested SQL
@@ -72,20 +95,20 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
                     new_cte_names = lappend(new_cte_names, cte->ctename);
                 }
                 stmt_cte_names = list_concat(list_copy(cte_names), new_cte_names);
-                qualify_node((Node *) stmt->withClause, schema, stmt_cte_names);
+                qualify_node((Node *) stmt->withClause, schema, stmt_cte_names, func_names, func_count);
             }
 
-            qualify_list(stmt->fromClause, schema, stmt_cte_names);
-            qualify_node((Node *) stmt->whereClause, schema, stmt_cte_names);
-            qualify_node((Node *) stmt->havingClause, schema, stmt_cte_names);
-            qualify_list(stmt->groupClause, schema, stmt_cte_names);
-            qualify_list(stmt->sortClause, schema, stmt_cte_names);
-            qualify_list(stmt->targetList, schema, stmt_cte_names);
-            qualify_list(stmt->valuesLists, schema, stmt_cte_names);
-            if (stmt->limitCount) qualify_node((Node *) stmt->limitCount, schema, stmt_cte_names);
-            if (stmt->limitOffset) qualify_node((Node *) stmt->limitOffset, schema, stmt_cte_names);
-            if (stmt->larg) qualify_node((Node *) stmt->larg, schema, stmt_cte_names);
-            if (stmt->rarg) qualify_node((Node *) stmt->rarg, schema, stmt_cte_names);
+            qualify_list(stmt->fromClause, schema, stmt_cte_names, func_names, func_count);
+            qualify_node((Node *) stmt->whereClause, schema, stmt_cte_names, func_names, func_count);
+            qualify_node((Node *) stmt->havingClause, schema, stmt_cte_names, func_names, func_count);
+            qualify_list(stmt->groupClause, schema, stmt_cte_names, func_names, func_count);
+            qualify_list(stmt->sortClause, schema, stmt_cte_names, func_names, func_count);
+            qualify_list(stmt->targetList, schema, stmt_cte_names, func_names, func_count);
+            qualify_list(stmt->valuesLists, schema, stmt_cte_names, func_names, func_count);
+            if (stmt->limitCount) qualify_node((Node *) stmt->limitCount, schema, stmt_cte_names, func_names, func_count);
+            if (stmt->limitOffset) qualify_node((Node *) stmt->limitOffset, schema, stmt_cte_names, func_names, func_count);
+            if (stmt->larg) qualify_node((Node *) stmt->larg, schema, stmt_cte_names, func_names, func_count);
+            if (stmt->rarg) qualify_node((Node *) stmt->rarg, schema, stmt_cte_names, func_names, func_count);
             break;
         }
         case T_InsertStmt: {
@@ -101,13 +124,13 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
                     new_cte_names = lappend(new_cte_names, cte->ctename);
                 }
                 stmt_cte_names = list_concat(list_copy(cte_names), new_cte_names);
-                qualify_node((Node *) stmt->withClause, schema, stmt_cte_names);
+                qualify_node((Node *) stmt->withClause, schema, stmt_cte_names, func_names, func_count);
             }
 
-            qualify_node((Node *) stmt->relation, schema, stmt_cte_names);
-            if (stmt->selectStmt) qualify_node((Node *) stmt->selectStmt, schema, stmt_cte_names);
-            if (stmt->onConflictClause) qualify_node((Node *) stmt->onConflictClause, schema, stmt_cte_names);
-            qualify_list(stmt->returningList, schema, stmt_cte_names);
+            qualify_node((Node *) stmt->relation, schema, stmt_cte_names, func_names, func_count);
+            if (stmt->selectStmt) qualify_node((Node *) stmt->selectStmt, schema, stmt_cte_names, func_names, func_count);
+            if (stmt->onConflictClause) qualify_node((Node *) stmt->onConflictClause, schema, stmt_cte_names, func_names, func_count);
+            qualify_list(stmt->returningList, schema, stmt_cte_names, func_names, func_count);
             break;
         }
         case T_UpdateStmt: {
@@ -123,14 +146,14 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
                     new_cte_names = lappend(new_cte_names, cte->ctename);
                 }
                 stmt_cte_names = list_concat(list_copy(cte_names), new_cte_names);
-                qualify_node((Node *) stmt->withClause, schema, stmt_cte_names);
+                qualify_node((Node *) stmt->withClause, schema, stmt_cte_names, func_names, func_count);
             }
 
-            qualify_node((Node *) stmt->relation, schema, stmt_cte_names);
-            qualify_list(stmt->fromClause, schema, stmt_cte_names);
-            qualify_node((Node *) stmt->whereClause, schema, stmt_cte_names);
-            qualify_list(stmt->targetList, schema, stmt_cte_names);
-            qualify_list(stmt->returningList, schema, stmt_cte_names);
+            qualify_node((Node *) stmt->relation, schema, stmt_cte_names, func_names, func_count);
+            qualify_list(stmt->fromClause, schema, stmt_cte_names, func_names, func_count);
+            qualify_node((Node *) stmt->whereClause, schema, stmt_cte_names, func_names, func_count);
+            qualify_list(stmt->targetList, schema, stmt_cte_names, func_names, func_count);
+            qualify_list(stmt->returningList, schema, stmt_cte_names, func_names, func_count);
             break;
         }
         case T_DeleteStmt: {
@@ -146,124 +169,135 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
                     new_cte_names = lappend(new_cte_names, cte->ctename);
                 }
                 stmt_cte_names = list_concat(list_copy(cte_names), new_cte_names);
-                qualify_node((Node *) stmt->withClause, schema, stmt_cte_names);
+                qualify_node((Node *) stmt->withClause, schema, stmt_cte_names, func_names, func_count);
             }
 
-            qualify_node((Node *) stmt->relation, schema, stmt_cte_names);
-            qualify_list(stmt->usingClause, schema, stmt_cte_names);
-            qualify_node((Node *) stmt->whereClause, schema, stmt_cte_names);
-            qualify_list(stmt->returningList, schema, stmt_cte_names);
+            qualify_node((Node *) stmt->relation, schema, stmt_cte_names, func_names, func_count);
+            qualify_list(stmt->usingClause, schema, stmt_cte_names, func_names, func_count);
+            qualify_node((Node *) stmt->whereClause, schema, stmt_cte_names, func_names, func_count);
+            qualify_list(stmt->returningList, schema, stmt_cte_names, func_names, func_count);
             break;
         }
         case T_JoinExpr: {
             JoinExpr *join = (JoinExpr *) node;
-            qualify_node(join->larg, schema, cte_names);
-            qualify_node(join->rarg, schema, cte_names);
-            qualify_node(join->quals, schema, cte_names);
+            qualify_node(join->larg, schema, cte_names, func_names, func_count);
+            qualify_node(join->rarg, schema, cte_names, func_names, func_count);
+            qualify_node(join->quals, schema, cte_names, func_names, func_count);
             break;
         }
         case T_FromExpr: {
             FromExpr *from = (FromExpr *) node;
-            qualify_list(from->fromlist, schema, cte_names);
-            qualify_node(from->quals, schema, cte_names);
+            qualify_list(from->fromlist, schema, cte_names, func_names, func_count);
+            qualify_node(from->quals, schema, cte_names, func_names, func_count);
             break;
         }
         case T_SubLink: {
             SubLink *sublink = (SubLink *) node;
-            qualify_node(sublink->subselect, schema, cte_names);
-            qualify_node(sublink->testexpr, schema, cte_names);
+            qualify_node(sublink->subselect, schema, cte_names, func_names, func_count);
+            qualify_node(sublink->testexpr, schema, cte_names, func_names, func_count);
             break;
         }
         case T_A_Expr: {
             A_Expr *aexpr = (A_Expr *) node;
-            qualify_node(aexpr->lexpr, schema, cte_names);
-            qualify_node(aexpr->rexpr, schema, cte_names);
+            qualify_node(aexpr->lexpr, schema, cte_names, func_names, func_count);
+            qualify_node(aexpr->rexpr, schema, cte_names, func_names, func_count);
             break;
         }
         case T_FuncCall: {
             FuncCall *func = (FuncCall *) node;
-            qualify_list(func->args, schema, cte_names);
-            qualify_node(func->agg_filter, schema, cte_names);
-            qualify_node((Node *)func->over, schema, cte_names);
+
+            // Check if function name should be qualified
+            if (func->funcname && list_length(func->funcname) == 1) {
+                char *func_name = strVal(linitial(func->funcname));
+                if (should_qualify_function(func_name, func_names, func_count)) {
+                    // Create qualified function name
+                    String *schema_val = makeString(pstrdup(schema));
+                    func->funcname = lcons(schema_val, func->funcname);
+                }
+            }
+
+            qualify_list(func->args, schema, cte_names, func_names, func_count);
+            qualify_node(func->agg_filter, schema, cte_names, func_names, func_count);
+            qualify_node((Node *)func->over, schema, cte_names, func_names, func_count);
             break;
         }
         case T_ResTarget: {
             ResTarget *res = (ResTarget *) node;
-            qualify_node(res->val, schema, cte_names);
+            qualify_node(res->val, schema, cte_names, func_names, func_count);
             break;
         }
         case T_WithClause: {
             WithClause *with = (WithClause *) node;
-            qualify_list(with->ctes, schema, cte_names);
+            qualify_list(with->ctes, schema, cte_names, func_names, func_count);
             break;
         }
         case T_CommonTableExpr: {
             CommonTableExpr *cte = (CommonTableExpr *) node;
             // Only qualify the CTE query, not the CTE name itself
-            qualify_node(cte->ctequery, schema, cte_names);
+            qualify_node(cte->ctequery, schema, cte_names, func_names, func_count);
             break;
         }
         case T_SortBy: {
             SortBy *sortby = (SortBy *) node;
-            qualify_node(sortby->node, schema, cte_names);
+            qualify_node(sortby->node, schema, cte_names, func_names, func_count);
             break;
         }
         case T_RangeSubselect: {
             RangeSubselect *subselect = (RangeSubselect *) node;
-            qualify_node(subselect->subquery, schema, cte_names);
+            qualify_node(subselect->subquery, schema, cte_names, func_names, func_count);
             break;
         }
         case T_List: {
             List *list = (List *) node;
-            qualify_list(list, schema, cte_names);
+            qualify_list(list, schema, cte_names, func_names, func_count);
             break;
         }
         case T_BoolExpr: {
             BoolExpr *boolexpr = (BoolExpr *) node;
-            qualify_list(boolexpr->args, schema, cte_names);
+            qualify_list(boolexpr->args, schema, cte_names, func_names, func_count);
             break;
         }
         case T_OnConflictClause: {
             OnConflictClause *onconflict = (OnConflictClause *) node;
-            qualify_list(onconflict->targetList, schema, cte_names);
-            qualify_node((Node *) onconflict->whereClause, schema, cte_names);
+            qualify_list(onconflict->targetList, schema, cte_names, func_names, func_count);
+            qualify_node((Node *) onconflict->whereClause, schema, cte_names, func_names, func_count);
             break;
         }
         case T_CoalesceExpr: {
             CoalesceExpr *coalesceexpr = (CoalesceExpr *) node;
-            qualify_list(coalesceexpr->args, schema, cte_names);
+            qualify_list(coalesceexpr->args, schema, cte_names, func_names, func_count);
             break;
         }
         case T_CaseExpr: {
             CaseExpr *caseexpr = (CaseExpr *) node;
-            qualify_node((Node *) caseexpr->arg, schema, cte_names);
-            qualify_list(caseexpr->args, schema, cte_names);
-            qualify_node((Node *) caseexpr->defresult, schema, cte_names);
+            qualify_node((Node *) caseexpr->arg, schema, cte_names, func_names, func_count);
+            qualify_list(caseexpr->args, schema, cte_names, func_names, func_count);
+            qualify_node((Node *) caseexpr->defresult, schema, cte_names, func_names, func_count);
             break;
         }
         case T_CaseWhen: {
             CaseWhen *casewhen = (CaseWhen *) node;
-            qualify_node((Node *) casewhen->expr, schema, cte_names);
-            qualify_node((Node *) casewhen->result, schema, cte_names);
+            qualify_node((Node *) casewhen->expr, schema, cte_names, func_names, func_count);
+            qualify_node((Node *) casewhen->result, schema, cte_names, func_names, func_count);
             break;
         }
         case T_WindowDef: {
             WindowDef *windef = (WindowDef *) node;
             /* PARTITION BY (...) */
-            qualify_list(windef->partitionClause, schema, cte_names);
+            qualify_list(windef->partitionClause, schema, cte_names, func_names, func_count);
             /* ORDER BY (...) (list of SortBy, each of which we already recurse into) */
-            qualify_list(windef->orderClause, schema, cte_names);
+            qualify_list(windef->orderClause, schema, cte_names, func_names, func_count);
             /* frame bound expressions such as 'RANGE BETWEEN ...' */
-            qualify_node(windef->startOffset, schema, cte_names);
-            qualify_node(windef->endOffset, schema, cte_names);
+            qualify_node(windef->startOffset, schema, cte_names, func_names, func_count);
+            qualify_node(windef->endOffset, schema, cte_names, func_names, func_count);
             break;
         }
         case T_RangeFunction: {
             RangeFunction *rangeFunc = (RangeFunction *) node;
             /* Traverse the functions list which contains function calls */
-            qualify_list(rangeFunc->functions, schema, cte_names);
+            qualify_list(rangeFunc->functions, schema, cte_names, func_names, func_count);
             /* Traverse the column definition list if present */
-            qualify_list(rangeFunc->coldeflist, schema, cte_names);
+            qualify_list(rangeFunc->coldeflist, schema, cte_names, func_names, func_count);
             break;
         }
         case T_CreateFunctionStmt: {
@@ -271,7 +305,7 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
 
             // Qualify the function body (sql_body for SQL functions)
             if (funcStmt->sql_body) {
-                qualify_node(funcStmt->sql_body, schema, cte_names);
+                qualify_node(funcStmt->sql_body, schema, cte_names, func_names, func_count);
             }
 
             // Qualify any table references in function options (like AS $$ ... $$ clauses)
@@ -307,94 +341,94 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
         case T_IndexStmt: {
             IndexStmt *stmt = (IndexStmt *) node;
             // Qualify the table being indexed
-            qualify_node((Node *) stmt->relation, schema, cte_names);
+            qualify_node((Node *) stmt->relation, schema, cte_names, func_names, func_count);
             // Qualify any expressions in the index
-            qualify_list(stmt->indexParams, schema, cte_names);
+            qualify_list(stmt->indexParams, schema, cte_names, func_names, func_count);
             // Qualify the WHERE clause if present
-            qualify_node(stmt->whereClause, schema, cte_names);
+            qualify_node(stmt->whereClause, schema, cte_names, func_names, func_count);
             break;
         }
         case T_CreateStmt: {
             CreateStmt *stmt = (CreateStmt *) node;
             // The table being created doesn't get qualified (it's the target)
             // But we need to qualify any table references in constraints
-            qualify_list(stmt->tableElts, schema, cte_names);
+            qualify_list(stmt->tableElts, schema, cte_names, func_names, func_count);
             // Qualify inherits clause
-            qualify_list(stmt->inhRelations, schema, cte_names);
+            qualify_list(stmt->inhRelations, schema, cte_names, func_names, func_count);
             break;
         }
         case T_CreateTableAsStmt: {
             CreateTableAsStmt *stmt = (CreateTableAsStmt *) node;
             // The table being created doesn't get qualified (it's the target)
             // But qualify the query that defines the table content
-            qualify_node(stmt->query, schema, cte_names);
+            qualify_node(stmt->query, schema, cte_names, func_names, func_count);
             break;
         }
         case T_AlterTableStmt: {
             AlterTableStmt *stmt = (AlterTableStmt *) node;
             // Qualify the table being altered
-            qualify_node((Node *) stmt->relation, schema, cte_names);
+            qualify_node((Node *) stmt->relation, schema, cte_names, func_names, func_count);
             // Qualify any commands that might reference other tables
-            qualify_list(stmt->cmds, schema, cte_names);
+            qualify_list(stmt->cmds, schema, cte_names, func_names, func_count);
             break;
         }
         case T_ViewStmt: {
             ViewStmt *stmt = (ViewStmt *) node;
             // The view being created doesn't get qualified
             // But qualify the query that defines the view
-            qualify_node(stmt->query, schema, cte_names);
+            qualify_node(stmt->query, schema, cte_names, func_names, func_count);
             break;
         }
         case T_DropStmt: {
             DropStmt *stmt = (DropStmt *) node;
             // Qualify the objects being dropped
-            qualify_list(stmt->objects, schema, cte_names);
+            qualify_list(stmt->objects, schema, cte_names, func_names, func_count);
             break;
         }
         case T_CreateTrigStmt: {
             CreateTrigStmt *stmt = (CreateTrigStmt *) node;
             // Qualify the table the trigger is on
-            qualify_node((Node *) stmt->relation, schema, cte_names);
+            qualify_node((Node *) stmt->relation, schema, cte_names, func_names, func_count);
             // Qualify any expressions in WHEN clause
-            qualify_node(stmt->whenClause, schema, cte_names);
+            qualify_node(stmt->whenClause, schema, cte_names, func_names, func_count);
             break;
         }
         case T_GrantStmt: {
             GrantStmt *stmt = (GrantStmt *) node;
             // Qualify the objects being granted on
-            qualify_list(stmt->objects, schema, cte_names);
+            qualify_list(stmt->objects, schema, cte_names, func_names, func_count);
             break;
         }
         case T_AlterTableCmd: {
             AlterTableCmd *cmd = (AlterTableCmd *) node;
             // Qualify any table references in alter table commands
-            qualify_node(cmd->def, schema, cte_names);
+            qualify_node(cmd->def, schema, cte_names, func_names, func_count);
             break;
         }
         case T_Constraint: {
             Constraint *constraint = (Constraint *) node;
             // Qualify table references in foreign key constraints
             if (constraint->pktable) {
-                qualify_node((Node *) constraint->pktable, schema, cte_names);
+                qualify_node((Node *) constraint->pktable, schema, cte_names, func_names, func_count);
             }
             // Qualify any expressions in check constraints
-            qualify_node(constraint->raw_expr, schema, cte_names);
+            qualify_node(constraint->raw_expr, schema, cte_names, func_names, func_count);
             // cooked_expr is a char* not a Node*, so we skip it
             break;
         }
         case T_ColumnDef: {
             ColumnDef *coldef = (ColumnDef *) node;
             // Qualify any constraints on the column
-            qualify_list(coldef->constraints, schema, cte_names);
+            qualify_list(coldef->constraints, schema, cte_names, func_names, func_count);
             // Qualify default expressions
-            qualify_node(coldef->raw_default, schema, cte_names);
-            qualify_node(coldef->cooked_default, schema, cte_names);
+            qualify_node(coldef->raw_default, schema, cte_names, func_names, func_count);
+            qualify_node(coldef->cooked_default, schema, cte_names, func_names, func_count);
             break;
         }
         case T_IndexElem: {
             IndexElem *elem = (IndexElem *) node;
             // Qualify any expressions in index elements
-            qualify_node(elem->expr, schema, cte_names);
+            qualify_node(elem->expr, schema, cte_names, func_names, func_count);
             break;
         }
         case T_ColumnRef:
@@ -460,7 +494,7 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
     }
 }
 
-char* pg_query_qualify_sql(const char *sql, const char *schema) {
+char* pg_query_qualify_sql_with_funcs(const char *sql, const char *schema, const char **func_names, int func_count) {
     PgQueryProtobufParseResult parse_result = {0};
     PgQueryDeparseResult deparse_result = {0};
     List *stmts;
@@ -488,7 +522,7 @@ char* pg_query_qualify_sql(const char *sql, const char *schema) {
         // Qualify table references in each statement
         foreach(lc, stmts) {
             RawStmt *raw_stmt = castNode(RawStmt, lfirst(lc));
-            qualify_node(raw_stmt->stmt, schema, NULL);
+            qualify_node(raw_stmt->stmt, schema, NULL, func_names, func_count);
         }
 
         // Convert back to protobuf
@@ -514,4 +548,8 @@ char* pg_query_qualify_sql(const char *sql, const char *schema) {
     pg_query_free_protobuf_parse_result(parse_result);
 
     return result;
+}
+
+char* pg_query_qualify_sql(const char *sql, const char *schema) {
+    return pg_query_qualify_sql_with_funcs(sql, schema, NULL, 0);
 }
