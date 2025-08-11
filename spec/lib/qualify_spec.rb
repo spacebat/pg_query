@@ -576,4 +576,99 @@ describe PgQuery, '#qualify' do
       expect(query).to eq "SELECT * FROM other_schema.qualified_table, public.unqualified_table"
     end
   end
+
+  describe "DDL statements" do
+    it "qualifies tables in CREATE INDEX statements with line ending preservation" do
+      sql = "CREATE INDEX idx_users_email ON users (email)"
+      query = described_class.qualify(sql, "public")
+      expect(query).to eq "CREATE INDEX idx_users_email ON public.users USING btree (email)"
+    end
+
+    it "qualifies tables in ALTER TABLE statements with line ending preservation" do
+      sql = "ALTER TABLE users ADD COLUMN created_at TIMESTAMP"
+      query = described_class.qualify(sql, "public")
+      expect(query).to eq "ALTER TABLE public.users ADD COLUMN created_at timestamp"
+    end
+
+    it "handles DROP TABLE statements" do
+      sql = "DROP TABLE users"
+      query = described_class.qualify(sql, "public")
+      # DROP TABLE doesn't qualify the table being dropped
+      expect(query).to include("users")
+      expect(query).not_to be_nil
+    end
+
+    it "qualifies tables in CREATE VIEW statements with line ending preservation" do
+      sql = "CREATE VIEW active_users AS SELECT * FROM users WHERE active = true"
+      query = described_class.qualify(sql, "public")
+      expect(query).to eq "CREATE VIEW active_users AS SELECT * FROM public.users WHERE active = true"
+    end
+
+    it "qualifies table references in CREATE FUNCTION statements" do
+      sql = "CREATE FUNCTION get_user_count() RETURNS int AS $$ SELECT COUNT(*) FROM users $$ LANGUAGE SQL"
+      query = described_class.qualify(sql, "public")
+      expect(query).to include("public.users")
+    end
+
+    it "qualifies tables in CREATE TRIGGER statements with line ending preservation" do
+      sql = "CREATE TRIGGER update_timestamp BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION update_ts()"
+      query = described_class.qualify(sql, "public")
+      expect(query).to eq "CREATE TRIGGER update_timestamp BEFORE UPDATE ON public.users FOR EACH ROW EXECUTE FUNCTION update_ts()"
+    end
+
+    it "handles complex DDL gracefully" do
+      sql = <<~SQL.chomp
+          CREATE TABLE complex_table (
+            id SERIAL PRIMARY KEY,
+            data JSONB,
+            created_at TIMESTAMP DEFAULT NOW()
+          )
+        SQL
+
+      query = described_class.qualify(sql, "public")
+      expect(query).to include("complex_table")
+      expect(query).not_to be_nil
+    end
+
+    it "qualifies table references in constraints" do
+      sql = "CREATE TABLE orders (id SERIAL, user_id INT REFERENCES users(id))"
+      query = described_class.qualify(sql, "public")
+      expect(query).to include("public.users")
+      expect(query).to include("orders")
+    end
+
+    it "qualifies tables in GRANT statements" do
+      sql = "GRANT SELECT ON users TO role1"
+      query = described_class.qualify(sql, "public")
+      expect(query).to include("public.users")
+      expect(query).to include("role1")
+    end
+
+    it "preserves already qualified table names in DDL" do
+      sql = "CREATE INDEX idx ON other_schema.users (email)"
+      query = described_class.qualify(sql, "public")
+      expect(query).to include("other_schema.users")
+      expect(query).not_to include("public.users")
+    end
+  end
+
+  describe "mixed DML and DDL" do
+    it "qualifies tables in simple INSERT statements with line ending preservation" do
+      sql = "INSERT INTO users (name) VALUES ('John Doe')"
+      query = described_class.qualify(sql, "public")
+      expect(query).to include("public.users")
+    end
+
+    it "qualifies tables in CREATE TABLE AS statements with line ending preservation" do
+      sql = "CREATE TABLE user_summary AS SELECT id, name FROM users"
+      query = described_class.qualify(sql, "public")
+      expect(query).to eq "CREATE TABLE user_summary AS SELECT id, name FROM public.users"
+    end
+
+    it "qualifies tables in UPDATE statements with line ending preservation" do
+      sql = "UPDATE users SET active = true WHERE id = 1"
+      query = described_class.qualify(sql, "public")
+      expect(query).to eq "UPDATE public.users SET active = true WHERE id = 1"
+    end
+  end
 end

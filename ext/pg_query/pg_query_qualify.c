@@ -304,6 +304,99 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
             }
             break;
         }
+        case T_IndexStmt: {
+            IndexStmt *stmt = (IndexStmt *) node;
+            // Qualify the table being indexed
+            qualify_node((Node *) stmt->relation, schema, cte_names);
+            // Qualify any expressions in the index
+            qualify_list(stmt->indexParams, schema, cte_names);
+            // Qualify the WHERE clause if present
+            qualify_node(stmt->whereClause, schema, cte_names);
+            break;
+        }
+        case T_CreateStmt: {
+            CreateStmt *stmt = (CreateStmt *) node;
+            // The table being created doesn't get qualified (it's the target)
+            // But we need to qualify any table references in constraints
+            qualify_list(stmt->tableElts, schema, cte_names);
+            // Qualify inherits clause
+            qualify_list(stmt->inhRelations, schema, cte_names);
+            break;
+        }
+        case T_CreateTableAsStmt: {
+            CreateTableAsStmt *stmt = (CreateTableAsStmt *) node;
+            // The table being created doesn't get qualified (it's the target)
+            // But qualify the query that defines the table content
+            qualify_node(stmt->query, schema, cte_names);
+            break;
+        }
+        case T_AlterTableStmt: {
+            AlterTableStmt *stmt = (AlterTableStmt *) node;
+            // Qualify the table being altered
+            qualify_node((Node *) stmt->relation, schema, cte_names);
+            // Qualify any commands that might reference other tables
+            qualify_list(stmt->cmds, schema, cte_names);
+            break;
+        }
+        case T_ViewStmt: {
+            ViewStmt *stmt = (ViewStmt *) node;
+            // The view being created doesn't get qualified
+            // But qualify the query that defines the view
+            qualify_node(stmt->query, schema, cte_names);
+            break;
+        }
+        case T_DropStmt: {
+            DropStmt *stmt = (DropStmt *) node;
+            // Qualify the objects being dropped
+            qualify_list(stmt->objects, schema, cte_names);
+            break;
+        }
+        case T_CreateTrigStmt: {
+            CreateTrigStmt *stmt = (CreateTrigStmt *) node;
+            // Qualify the table the trigger is on
+            qualify_node((Node *) stmt->relation, schema, cte_names);
+            // Qualify any expressions in WHEN clause
+            qualify_node(stmt->whenClause, schema, cte_names);
+            break;
+        }
+        case T_GrantStmt: {
+            GrantStmt *stmt = (GrantStmt *) node;
+            // Qualify the objects being granted on
+            qualify_list(stmt->objects, schema, cte_names);
+            break;
+        }
+        case T_AlterTableCmd: {
+            AlterTableCmd *cmd = (AlterTableCmd *) node;
+            // Qualify any table references in alter table commands
+            qualify_node(cmd->def, schema, cte_names);
+            break;
+        }
+        case T_Constraint: {
+            Constraint *constraint = (Constraint *) node;
+            // Qualify table references in foreign key constraints
+            if (constraint->pktable) {
+                qualify_node((Node *) constraint->pktable, schema, cte_names);
+            }
+            // Qualify any expressions in check constraints
+            qualify_node(constraint->raw_expr, schema, cte_names);
+            // cooked_expr is a char* not a Node*, so we skip it
+            break;
+        }
+        case T_ColumnDef: {
+            ColumnDef *coldef = (ColumnDef *) node;
+            // Qualify any constraints on the column
+            qualify_list(coldef->constraints, schema, cte_names);
+            // Qualify default expressions
+            qualify_node(coldef->raw_default, schema, cte_names);
+            qualify_node(coldef->cooked_default, schema, cte_names);
+            break;
+        }
+        case T_IndexElem: {
+            IndexElem *elem = (IndexElem *) node;
+            // Qualify any expressions in index elements
+            qualify_node(elem->expr, schema, cte_names);
+            break;
+        }
         case T_ColumnRef:
         case T_A_Const:
         case T_TypeCast:
@@ -318,15 +411,11 @@ static void qualify_node(Node *node, const char *schema, List *cte_names) {
         case T_ConvertRowtypeExpr:
         case T_CollateExpr:
         case T_TypeName:
-        case T_ColumnDef:
-        case T_IndexElem:
-        case T_Constraint:
         case T_DefElem:
         case T_LockingClause:
         case T_XmlSerialize:
         case T_SetOperationStmt:
         case T_WindowClause:
-        case T_IndexStmt:
         case T_NotifyStmt:
         case T_DeclareCursorStmt:
         case T_CreateTableSpaceStmt:
