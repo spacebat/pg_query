@@ -550,6 +550,16 @@ describe PgQuery, '#qualify' do
       expect(query).to eq "SELECT * FROM information_schema.tables"
     end
 
+    it "should not qualify tables starting with pg_" do
+      query = described_class.qualify("SELECT * FROM pg_class", "public")
+      expect(query).to eq "SELECT * FROM pg_class"
+    end
+
+    it "should not qualify pg_ tables in complex queries" do
+      query = described_class.qualify("SELECT u.*, t.typname FROM users u JOIN pg_type t ON u.type_oid = t.oid", "public")
+      expect(query).to eq "SELECT u.*, t.typname FROM public.users u JOIN pg_type t ON u.type_oid = t.oid"
+    end
+
     it "should handle very long table names" do
       long_table_name = "a" * 60
       query = described_class.qualify("SELECT * FROM #{long_table_name}", "public")

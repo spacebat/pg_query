@@ -25,6 +25,11 @@ static void qualify_rangevar(RangeVar *rv, const char *schema, List *cte_names) 
         }
     }
 
+    // Don't qualify tables that start with "pg_" (PostgreSQL system tables)
+    if (strncmp(rv->relname, "pg_", 3) == 0) {
+        return;
+    }
+
     // If not a CTE and not already qualified, add schema
     if (!rv->schemaname || strcmp(rv->schemaname, "") == 0) {
         rv->schemaname = pstrdup(schema);
