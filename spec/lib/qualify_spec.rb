@@ -640,6 +640,48 @@ describe PgQuery, '#qualify' do
       expect(query).to eq "CREATE TRIGGER update_timestamp BEFORE UPDATE ON public.users FOR EACH ROW EXECUTE FUNCTION update_ts()"
     end
 
+    it "qualifies tables in ALTER TABLE DISABLE TRIGGER statements" do
+      sql = "ALTER TABLE users DISABLE TRIGGER update_timestamp"
+      query = described_class.qualify(sql, "public")
+      expect(query).to eq "ALTER TABLE public.users DISABLE TRIGGER update_timestamp"
+    end
+
+    it "qualifies tables in ALTER TABLE ENABLE TRIGGER statements" do
+      sql = "ALTER TABLE users ENABLE TRIGGER update_timestamp"
+      query = described_class.qualify(sql, "public")
+      expect(query).to eq "ALTER TABLE public.users ENABLE TRIGGER update_timestamp"
+    end
+
+    it "qualifies tables in ALTER TABLE ENABLE TRIGGER ALL statements" do
+      sql = "ALTER TABLE users ENABLE TRIGGER ALL"
+      query = described_class.qualify(sql, "public")
+      expect(query).to eq "ALTER TABLE public.users ENABLE TRIGGER ALL"
+    end
+
+    it "qualifies tables in ALTER TABLE DISABLE TRIGGER ALL statements" do
+      sql = "ALTER TABLE users DISABLE TRIGGER ALL"
+      query = described_class.qualify(sql, "public")
+      expect(query).to eq "ALTER TABLE public.users DISABLE TRIGGER ALL"
+    end
+
+    it "qualifies tables in DROP TRIGGER statements" do
+      sql = "DROP TRIGGER update_timestamp ON users"
+      query = described_class.qualify(sql, "public")
+      expect(query).to eq "DROP TRIGGER update_timestamp ON public.users"
+    end
+
+    it "qualifies tables in DROP TRIGGER IF EXISTS statements" do
+      sql = "DROP TRIGGER IF EXISTS update_timestamp ON users"
+      query = described_class.qualify(sql, "public")
+      expect(query).to eq "DROP TRIGGER IF EXISTS update_timestamp ON public.users"
+    end
+
+    it "qualifies tables in CREATE TRIGGER with WHEN clause" do
+      sql = "CREATE TRIGGER conditional_update BEFORE UPDATE ON orders FOR EACH ROW WHEN (OLD.status != NEW.status) EXECUTE FUNCTION log_status_change()"
+      query = described_class.qualify(sql, "public")
+      expect(query).to eq "CREATE TRIGGER conditional_update BEFORE UPDATE ON public.orders FOR EACH ROW WHEN (old.status <> new.status) EXECUTE FUNCTION log_status_change()"
+    end
+
     it "handles complex DDL gracefully" do
       sql = <<~SQL.chomp
           CREATE TABLE complex_table (
@@ -745,6 +787,30 @@ describe PgQuery, '#qualify' do
     it "handles case sensitivity in function names" do
       query = described_class.qualify_with_funcs("SELECT My_Func(col1) FROM users", "public", ["my_func"])
       expect(query).to eq "SELECT public.my_func(col1) FROM public.users"
+    end
+
+    it "qualifies functions in CREATE TRIGGER statements" do
+      sql = "CREATE TRIGGER update_timestamp BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION update_ts()"
+      query = described_class.qualify_with_funcs(sql, "public", ["update_ts"])
+      expect(query).to eq "CREATE TRIGGER update_timestamp BEFORE UPDATE ON public.users FOR EACH ROW EXECUTE FUNCTION public.update_ts()"
+    end
+
+    it "qualifies functions in CREATE TRIGGER with WHEN clause" do
+      sql = "CREATE TRIGGER conditional_update BEFORE UPDATE ON orders FOR EACH ROW WHEN (validate_change(OLD.status, NEW.status)) EXECUTE FUNCTION log_status_change()"
+      query = described_class.qualify_with_funcs(sql, "public", ["validate_change", "log_status_change"])
+      expect(query).to eq "CREATE TRIGGER conditional_update BEFORE UPDATE ON public.orders FOR EACH ROW WHEN (public.validate_change(old.status, new.status)) EXECUTE FUNCTION public.log_status_change()"
+    end
+
+    it "qualifies multiple functions in CREATE TRIGGER with complex WHEN clause" do
+      sql = "CREATE TRIGGER audit_trigger AFTER UPDATE ON users FOR EACH ROW WHEN (audit_enabled() AND changed_columns(OLD, NEW) > 0) EXECUTE FUNCTION create_audit_entry()"
+      query = described_class.qualify_with_funcs(sql, "public", ["audit_enabled", "changed_columns", "create_audit_entry"])
+      expect(query).to eq "CREATE TRIGGER audit_trigger AFTER UPDATE ON public.users FOR EACH ROW WHEN (public.audit_enabled() AND public.changed_columns(old, new) > 0) EXECUTE FUNCTION public.create_audit_entry()"
+    end
+
+    it "does not qualify already schema-qualified functions in triggers" do
+      sql = "CREATE TRIGGER update_timestamp BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION audit.update_ts()"
+      query = described_class.qualify_with_funcs(sql, "public", ["update_ts"])
+      expect(query).to eq "CREATE TRIGGER update_timestamp BEFORE UPDATE ON public.users FOR EACH ROW EXECUTE FUNCTION audit.update_ts()"
     end
   end
 end

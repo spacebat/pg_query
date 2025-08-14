@@ -1,5 +1,6 @@
 #include "pg_query.h"
 #include "pg_query_internal.h"
+#include "nodes/makefuncs.h"
 #include "pg_query_readfuncs.h"
 #include "pg_query_outfuncs.h"
 #include "postgres.h"
@@ -436,8 +437,42 @@ static void qualify_node(Node *node, const char *schema, List *cte_names, const 
         }
         case T_DropStmt: {
             DropStmt *stmt = (DropStmt *) node;
-            // Qualify the objects being dropped
-            qualify_list(stmt->objects, schema, cte_names, func_names, func_count);
+            // Handle different object types differently
+            if (stmt->removeType == OBJECT_TRIGGER) {
+                // For DROP TRIGGER, objects contains [table_name, trigger_name] pairs
+                // We need to qualify the table name (first element in each pair)
+                ListCell *lc;
+                foreach(lc, stmt->objects) {
+                    List *trigger_spec = (List *) lfirst(lc);
+                    if (list_length(trigger_spec) >= 2) {
+                        // For DROP TRIGGER, trigger_spec is [table_name, trigger_name]
+                        // We need to qualify the table name (first element)
+                        Node *table_name_node = (Node *) linitial(trigger_spec);
+                        if (IsA(table_name_node, String)) {
+                            String *table_name_str = (String *) table_name_node;
+                            RangeVar *rv = makeRangeVar(NULL, table_name_str->sval, -1);
+                            qualify_rangevar(rv, schema, cte_names);
+                            // If the table should be qualified, modify the list structure
+                            if (rv->schemaname) {
+                                // Replace the list [table_name, trigger_name] with [schema, table_name, trigger_name]
+                                Node *trigger_name_node = (Node *) lsecond(trigger_spec);
+
+                                // Clear the current list and rebuild it
+                                trigger_spec = NIL;
+                                trigger_spec = lappend(trigger_spec, makeString(pstrdup(rv->schemaname)));
+                                trigger_spec = lappend(trigger_spec, makeString(pstrdup(rv->relname)));
+                                trigger_spec = lappend(trigger_spec, trigger_name_node);
+
+                                // Replace the list in stmt->objects
+                                lfirst(lc) = trigger_spec;
+                            }
+                        }
+                    }
+                }
+            } else {
+                // For other drop types, qualify the objects normally
+                qualify_list(stmt->objects, schema, cte_names, func_names, func_count);
+            }
             break;
         }
         case T_CreateTrigStmt: {
@@ -446,6 +481,16 @@ static void qualify_node(Node *node, const char *schema, List *cte_names, const 
             qualify_node((Node *) stmt->relation, schema, cte_names, func_names, func_count);
             // Qualify any expressions in WHEN clause
             qualify_node(stmt->whenClause, schema, cte_names, func_names, func_count);
+            // Qualify the function name if it's in the function list
+            if (stmt->funcname && func_names && func_count > 0) {
+                char *func_name = strVal(llast(stmt->funcname));
+                if (should_qualify_function(func_name, func_names, func_count)) {
+                    // If it's a single-element list (unqualified function), qualify it
+                    if (list_length(stmt->funcname) == 1) {
+                        stmt->funcname = lcons(makeString(pstrdup(schema)), stmt->funcname);
+                    }
+                }
+            }
             break;
         }
         case T_GrantStmt: {
