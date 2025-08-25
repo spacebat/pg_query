@@ -721,6 +721,24 @@ describe PgQuery, '#qualify' do
       expect(query).to include("orders")
     end
 
+    it "preserves DEFAULT clauses in CREATE TABLE statements" do
+      sql = "CREATE TABLE users (id uuid DEFAULT public.uuid_generate_v7() NOT NULL, name text DEFAULT 'Anonymous', created_at timestamp DEFAULT now())"
+      query = described_class.qualify(sql, "public")
+      expect(query).to include("DEFAULT public.uuid_generate_v7()")
+      expect(query).to include("DEFAULT 'Anonymous'")
+      expect(query).to include("DEFAULT now()")
+      expect(query).to include("NOT NULL")
+    end
+
+    it "qualifies function calls in DEFAULT clauses" do
+      sql = "CREATE TABLE test (id uuid DEFAULT uuid_generate_v7(), other_id uuid DEFAULT other_schema.uuid_generate_v4())"
+      query = described_class.qualify(sql, "public")
+      # uuid_generate_v7 should remain unqualified (it's not a table reference)
+      expect(query).to include("DEFAULT uuid_generate_v7()")
+      # other_schema.uuid_generate_v4 should remain as-is (already qualified)
+      expect(query).to include("DEFAULT other_schema.uuid_generate_v4()")
+    end
+
     it "qualifies tables in GRANT statements" do
       sql = "GRANT SELECT ON users TO role1"
       query = described_class.qualify(sql, "public")
