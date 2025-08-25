@@ -366,25 +366,42 @@ static void qualify_node(Node *node, const char *schema, List *cte_names, const 
 
             // Qualify any table references in function options (like AS $$ ... $$ clauses)
             if (funcStmt->options) {
+                // First, check the function language
+                char *language = NULL;
                 ListCell *lc;
                 foreach(lc, funcStmt->options) {
                     DefElem *def = (DefElem *) lfirst(lc);
-                    if (def && def->defname && strcmp(def->defname, "as") == 0) {
-                        // This is the function body definition
-                        if (def->arg && IsA(def->arg, List)) {
-                            // Function body is a list of strings (for languages like SQL)
-                            List *body_list = (List *) def->arg;
-                            ListCell *body_lc;
-                            foreach(body_lc, body_list) {
-                                Node *body_node = (Node *) lfirst(body_lc);
-                                if (body_node && IsA(body_node, String)) {
-                                    String *body_str = (String *) body_node;
-                                    // Parse the function body as SQL and qualify it
-                                    char *qualified_body = pg_query_qualify_sql(body_str->sval, schema);
-                                    if (qualified_body) {
-                                        // Replace the original body with the qualified version
-                                        body_str->sval = pstrdup(qualified_body);
-                                        free(qualified_body);
+                    if (def && def->defname && strcmp(def->defname, "language") == 0) {
+                        if (def->arg && IsA(def->arg, String)) {
+                            String *lang_str = (String *) def->arg;
+                            language = lang_str->sval;
+                            break;
+                        }
+                    }
+                }
+
+                // Handle different function languages appropriately
+                if (language && strcmp(language, "sql") == 0) {
+                    // For SQL functions, qualify the entire body
+                    foreach(lc, funcStmt->options) {
+                        DefElem *def = (DefElem *) lfirst(lc);
+                        if (def && def->defname && strcmp(def->defname, "as") == 0) {
+                            // This is the function body definition
+                            if (def->arg && IsA(def->arg, List)) {
+                                // Function body is a list of strings (for SQL functions)
+                                List *body_list = (List *) def->arg;
+                                ListCell *body_lc;
+                                foreach(body_lc, body_list) {
+                                    Node *body_node = (Node *) lfirst(body_lc);
+                                    if (body_node && IsA(body_node, String)) {
+                                        String *body_str = (String *) body_node;
+                                        // Parse the function body as SQL and qualify it
+                                        char *qualified_body = pg_query_qualify_sql(body_str->sval, schema);
+                                        if (qualified_body) {
+                                            // Replace the original body with the qualified version
+                                            body_str->sval = pstrdup(qualified_body);
+                                            free(qualified_body);
+                                        }
                                     }
                                 }
                             }

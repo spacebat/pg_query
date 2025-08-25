@@ -541,6 +541,24 @@ describe PgQuery, '#qualify' do
       query = described_class.qualify(sql, "public")
       expect(query).to eq "CREATE FUNCTION get_user_orders(user_id int) RETURNS TABLE (order_id int) AS $$SELECT id FROM other_schema.orders WHERE user_id = $1$$ LANGUAGE sql"
     end
+
+    it "does not qualify table references in PL/pgSQL function bodies" do
+      sql = "CREATE FUNCTION update_user_orders(user_id int) RETURNS void AS $$ BEGIN UPDATE orders SET status = 'processed' WHERE user_id = $1; IF NOT FOUND THEN RAISE NOTICE 'No orders found'; END IF; END; $$ LANGUAGE plpgsql"
+      query = described_class.qualify(sql, "public")
+      expect(query).to eq "CREATE FUNCTION update_user_orders(user_id int) RETURNS void AS $$ BEGIN UPDATE orders SET status = 'processed' WHERE user_id = $1; IF NOT FOUND THEN RAISE NOTICE 'No orders found'; END IF; END; $$ LANGUAGE plpgsql"
+    end
+
+    it "distinguishes between SQL and PL/pgSQL languages" do
+      # SQL function should be qualified
+      sql_func = "CREATE FUNCTION get_count() RETURNS int AS $$ SELECT COUNT(*) FROM users $$ LANGUAGE SQL"
+      qualified_sql = described_class.qualify(sql_func, "public")
+      expect(qualified_sql).to eq "CREATE FUNCTION get_count() RETURNS int AS $$SELECT count(*) FROM public.users$$ LANGUAGE sql"
+
+      # PL/pgSQL function should NOT be qualified
+      plpgsql_func = "CREATE FUNCTION insert_user(name text) RETURNS void AS $$ BEGIN INSERT INTO users (name) VALUES (name); END; $$ LANGUAGE plpgsql".freeze
+      qualified_plpgsql = described_class.qualify(plpgsql_func, "public")
+      expect(qualified_plpgsql).to eq plpgsql_func
+    end
   end
 
   describe "pending improvements - edge cases and error handling" do
