@@ -493,8 +493,39 @@ static void qualify_node(Node *node, const char *schema, List *cte_names, const 
                     }
                 }
             } else {
-                // For other drop types, qualify the objects normally
-                qualify_list(stmt->objects, schema, cte_names, func_names, func_count);
+                // For other drop types, handle based on the object type
+                if (stmt->removeType == OBJECT_TABLE || stmt->removeType == OBJECT_VIEW ||
+                    stmt->removeType == OBJECT_MATVIEW || stmt->removeType == OBJECT_INDEX ||
+                    stmt->removeType == OBJECT_SEQUENCE) {
+                    // These objects use simple name lists: [name] or [schema, name]
+                    ListCell *lc;
+                    foreach(lc, stmt->objects) {
+                        List *name_list = (List *) lfirst(lc);
+                        if (list_length(name_list) == 1) {
+                            // Unqualified name: [name]
+                            Node *name_node = (Node *) linitial(name_list);
+                            if (IsA(name_node, String)) {
+                                String *name_str = (String *) name_node;
+                                RangeVar *rv = makeRangeVar(NULL, name_str->sval, -1);
+                                qualify_rangevar(rv, schema, cte_names);
+
+                                // If should be qualified, replace with [schema, name]
+                                if (rv->schemaname) {
+                                    name_list = NIL;
+                                    name_list = lappend(name_list, makeString(pstrdup(rv->schemaname)));
+                                    name_list = lappend(name_list, makeString(pstrdup(rv->relname)));
+                                    lfirst(lc) = name_list;
+                                }
+                            }
+                        }
+                        // If list_length == 2, it's already qualified: [schema, name]
+                        // No need to modify
+                    }
+                } else {
+                    // For other drop types (FUNCTION, etc.), use the default handling
+                    // These may have different structures (like ObjectWithArgs)
+                    qualify_list(stmt->objects, schema, cte_names, func_names, func_count);
+                }
             }
             break;
         }

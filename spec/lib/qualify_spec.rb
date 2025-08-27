@@ -632,12 +632,28 @@ describe PgQuery, '#qualify' do
       expect(query).to eq "ALTER TABLE public.users ADD COLUMN created_at timestamp"
     end
 
-    it "handles DROP TABLE statements" do
+    it "qualifies tables in DROP TABLE statements" do
       sql = "DROP TABLE users"
       query = described_class.qualify(sql, "public")
-      # DROP TABLE doesn't qualify the table being dropped
-      expect(query).to include("users")
-      expect(query).not_to be_nil
+      expect(query).to eq "DROP TABLE public.users"
+    end
+
+    it "preserves already qualified tables in DROP TABLE statements" do
+      sql = "DROP TABLE other_schema.users"
+      query = described_class.qualify(sql, "public")
+      expect(query).to eq "DROP TABLE other_schema.users"
+    end
+
+    it "qualifies multiple tables in DROP TABLE statements" do
+      sql = "DROP TABLE users, orders, products"
+      query = described_class.qualify(sql, "public")
+      expect(query).to eq "DROP TABLE public.users, public.orders, public.products"
+    end
+
+    it "qualifies indexes in DROP INDEX statements" do
+      sql = "DROP INDEX my_index"
+      query = described_class.qualify(sql, "public")
+      expect(query).to eq "DROP INDEX public.my_index"
     end
 
     it "qualifies tables in CREATE VIEW statements with line ending preservation" do
