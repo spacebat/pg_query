@@ -456,25 +456,28 @@ static void qualify_node(Node *node, const char *schema, List *cte_names, const 
             DropStmt *stmt = (DropStmt *) node;
             // Handle different object types differently
             if (stmt->removeType == OBJECT_TRIGGER) {
-                // For DROP TRIGGER, objects contains [table_name, trigger_name] pairs
-                // We need to qualify the table name (first element in each pair)
+                // For DROP TRIGGER, objects contains lists that represent trigger specifications
+                // Structure depends on whether table is already qualified:
+                // - Unqualified table: [table_name, trigger_name]
+                // - Qualified table: [schema_name, table_name, trigger_name]
                 ListCell *lc;
                 foreach(lc, stmt->objects) {
                     List *trigger_spec = (List *) lfirst(lc);
-                    if (list_length(trigger_spec) >= 2) {
-                        // For DROP TRIGGER, trigger_spec is [table_name, trigger_name]
-                        // We need to qualify the table name (first element)
+                    int spec_length = list_length(trigger_spec);
+
+                    if (spec_length == 2) {
+                        // Unqualified table: [table_name, trigger_name]
                         Node *table_name_node = (Node *) linitial(trigger_spec);
+                        Node *trigger_name_node = (Node *) lsecond(trigger_spec);
+
                         if (IsA(table_name_node, String)) {
                             String *table_name_str = (String *) table_name_node;
                             RangeVar *rv = makeRangeVar(NULL, table_name_str->sval, -1);
                             qualify_rangevar(rv, schema, cte_names);
+
                             // If the table should be qualified, modify the list structure
                             if (rv->schemaname) {
-                                // Replace the list [table_name, trigger_name] with [schema, table_name, trigger_name]
-                                Node *trigger_name_node = (Node *) lsecond(trigger_spec);
-
-                                // Clear the current list and rebuild it
+                                // Replace [table_name, trigger_name] with [schema_name, table_name, trigger_name]
                                 trigger_spec = NIL;
                                 trigger_spec = lappend(trigger_spec, makeString(pstrdup(rv->schemaname)));
                                 trigger_spec = lappend(trigger_spec, makeString(pstrdup(rv->relname)));
@@ -484,6 +487,9 @@ static void qualify_node(Node *node, const char *schema, List *cte_names, const 
                                 lfirst(lc) = trigger_spec;
                             }
                         }
+                    } else if (spec_length == 3) {
+                        // Already qualified table: [schema_name, table_name, trigger_name]
+                        // No need to modify - it's already qualified
                     }
                 }
             } else {

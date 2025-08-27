@@ -694,6 +694,18 @@ describe PgQuery, '#qualify' do
       expect(query).to eq "DROP TRIGGER IF EXISTS update_timestamp ON public.users"
     end
 
+    it "preserves already qualified tables in DROP TRIGGER statements" do
+      sql = "DROP TRIGGER update_timestamp ON other_schema.users"
+      query = described_class.qualify(sql, "public")
+      expect(query).to eq "DROP TRIGGER update_timestamp ON other_schema.users"
+    end
+
+    it "handles complex trigger and table names in DROP TRIGGER statements" do
+      sql = 'DROP TRIGGER my_trigger ON "30759356-abc1-6802-743d-8e901fa862a9".compliance_warnings'
+      query = described_class.qualify(sql, "30759356-abc1-6802-743d-8e901fa862a9")
+      expect(query).to eq 'DROP TRIGGER my_trigger ON "30759356-abc1-6802-743d-8e901fa862a9".compliance_warnings'
+    end
+
     it "qualifies tables in CREATE TRIGGER with WHEN clause" do
       sql = "CREATE TRIGGER conditional_update BEFORE UPDATE ON orders FOR EACH ROW WHEN (OLD.status != NEW.status) EXECUTE FUNCTION log_status_change()"
       query = described_class.qualify(sql, "public")
