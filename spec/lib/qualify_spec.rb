@@ -802,6 +802,217 @@ describe PgQuery, '#qualify' do
     end
   end
 
+  describe "operational SQL statements" do
+    it "qualifies tables in VACUUM statements" do
+      query = described_class.qualify("VACUUM users", "public")
+      expect(query).to eq "VACUUM public.users"
+    end
+
+    it "qualifies tables in VACUUM ANALYZE statements" do
+      query = described_class.qualify("VACUUM ANALYZE users", "public")
+      expect(query).to eq "VACUUM (ANALYZE) public.users"
+    end
+
+    it "qualifies tables in VACUUM with options" do
+      query = described_class.qualify("VACUUM (FULL) users", "public")
+      expect(query).to eq "VACUUM (FULL) public.users"
+    end
+
+    it "qualifies tables in VACUUM with multiple options" do
+      query = described_class.qualify("VACUUM (FULL, ANALYZE) users", "public")
+      expect(query).to eq "VACUUM (FULL, ANALYZE) public.users"
+    end
+
+    it "qualifies tables in ANALYZE statements" do
+      query = described_class.qualify("ANALYZE users", "public")
+      expect(query).to eq "ANALYZE public.users"
+    end
+
+    it "qualifies multiple tables in VACUUM statements" do
+      query = described_class.qualify("VACUUM users, orders", "public")
+      expect(query).to eq "VACUUM public.users, public.orders"
+    end
+
+    it "qualifies tables in VACUUM with column specifications" do
+      query = described_class.qualify("VACUUM users(name, email)", "public")
+      expect(query).to eq "VACUUM public.users(name, email)"
+    end
+
+    it "preserves already qualified tables in VACUUM statements" do
+      query = described_class.qualify("VACUUM other_schema.users", "public")
+      expect(query).to eq "VACUUM other_schema.users"
+    end
+
+    it "qualifies mixed qualified and unqualified tables in VACUUM" do
+      query = described_class.qualify("VACUUM other_schema.users, orders", "public")
+      expect(query).to eq "VACUUM other_schema.users, public.orders"
+    end
+
+    it "does not qualify system tables in VACUUM statements" do
+      query = described_class.qualify("VACUUM pg_class", "public")
+      expect(query).to eq "VACUUM pg_class"
+    end
+
+    it "qualifies tables in VACUUM with different schema names" do
+      query = described_class.qualify("VACUUM users", "analytics")
+      expect(query).to eq "VACUUM analytics.users"
+    end
+
+    it "handles VACUUM with quotes UUID schema names" do
+      uuid_schema = "123e4567-e89b-12d3-a456-426614174000"
+      query = described_class.qualify("VACUUM users", uuid_schema)
+      expect(query).to eq 'VACUUM "123e4567-e89b-12d3-a456-426614174000".users'
+    end
+
+    it "qualifies tables in CLUSTER statements" do
+      query = described_class.qualify("CLUSTER users", "public")
+      expect(query).to eq "CLUSTER public.users"
+    end
+
+    it "qualifies tables in CLUSTER with index specification" do
+      query = described_class.qualify("CLUSTER users USING idx_users_name", "public")
+      expect(query).to eq "CLUSTER public.users USING idx_users_name"
+    end
+
+    it "qualifies tables in TRUNCATE statements" do
+      query = described_class.qualify("TRUNCATE users", "public")
+      expect(query).to eq "TRUNCATE public.users"
+    end
+
+    it "qualifies tables in TRUNCATE with options" do
+      query = described_class.qualify("TRUNCATE users RESTART IDENTITY CASCADE", "public")
+      expect(query).to eq "TRUNCATE public.users RESTART IDENTITY CASCADE"
+    end
+
+    it "qualifies multiple tables in TRUNCATE statements" do
+      query = described_class.qualify("TRUNCATE users, orders", "public")
+      expect(query).to eq "TRUNCATE public.users, public.orders"
+    end
+
+    it "qualifies tables in EXPLAIN statements" do
+      query = described_class.qualify("EXPLAIN SELECT * FROM users", "public")
+      expect(query).to eq "EXPLAIN SELECT * FROM public.users"
+    end
+
+    it "qualifies tables in EXPLAIN ANALYZE statements" do
+      query = described_class.qualify("EXPLAIN ANALYZE SELECT * FROM users", "public")
+      expect(query).to eq "EXPLAIN (ANALYZE) SELECT * FROM public.users"
+    end
+
+    it "qualifies tables in complex EXPLAIN statements with subqueries" do
+      query = described_class.qualify("EXPLAIN (FORMAT JSON) SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)", "public")
+      expect(query).to eq 'EXPLAIN (FORMAT "json") SELECT * FROM public.users WHERE id IN (SELECT user_id FROM public.orders)'
+    end
+
+    it "qualifies tables in LOCK statements" do
+      query = described_class.qualify("LOCK users", "public")
+      expect(query).to eq "LOCK TABLE public.users"
+    end
+
+    it "qualifies multiple tables in LOCK statements" do
+      query = described_class.qualify("LOCK users, orders IN SHARE MODE", "public")
+      expect(query).to eq "LOCK TABLE public.users, public.orders IN SHARE MODE"
+    end
+
+    it "preserves already qualified tables in operational statements" do
+      query = described_class.qualify("CLUSTER other_schema.users", "public")
+      expect(query).to eq "CLUSTER other_schema.users"
+    end
+
+    it "handles VACUUM with empty schema (should not qualify)" do
+      query = described_class.qualify("VACUUM users", "")
+      expect(query).to eq "VACUUM users"
+    end
+
+    it "handles VACUUM with information_schema tables (should not qualify)" do
+      query = described_class.qualify("VACUUM information_schema.tables", "public")
+      expect(query).to eq "VACUUM information_schema.tables"
+    end
+
+    it "qualifies tables in nested EXPLAIN with CTEs" do
+      query = described_class.qualify("EXPLAIN WITH user_stats AS (SELECT * FROM users) SELECT * FROM user_stats JOIN orders ON user_stats.id = orders.user_id", "public")
+      expect(query).to eq "EXPLAIN WITH user_stats AS (SELECT * FROM public.users) SELECT * FROM user_stats JOIN public.orders ON user_stats.id = orders.user_id"
+    end
+
+    it "qualifies tables in EXPLAIN with complex window functions" do
+      query = described_class.qualify("EXPLAIN SELECT ROW_NUMBER() OVER (ORDER BY (SELECT created_at FROM profiles WHERE user_id = users.id)) FROM users", "public")
+      expect(query).to eq "EXPLAIN SELECT row_number() OVER (ORDER BY (SELECT created_at FROM public.profiles WHERE user_id = users.id)) FROM public.users"
+    end
+
+    it "handles CLUSTER without table name (should not crash)" do
+      query = described_class.qualify("CLUSTER", "public")
+      expect(query).to eq "CLUSTER"
+    end
+
+    it "handles mixed qualified and unqualified in TRUNCATE with CASCADE" do
+      query = described_class.qualify("TRUNCATE schema1.table1, table2, table3 CASCADE", "public")
+      expect(query).to eq "TRUNCATE schema1.table1, public.table2, public.table3 CASCADE"
+    end
+
+    it "qualifies tables in LOCK with NOWAIT option" do
+      query = described_class.qualify("LOCK users IN ACCESS EXCLUSIVE MODE NOWAIT", "public")
+      expect(query).to eq "LOCK TABLE public.users NOWAIT"
+    end
+
+    it "preserves quoted table names in operational statements" do
+      query = described_class.qualify('VACUUM "My Table"', "public")
+      expect(query).to eq 'VACUUM public."My Table"'
+    end
+
+    it "handles VACUUM ALL (no specific tables)" do
+      query = described_class.qualify("VACUUM", "public")
+      expect(query).to eq "VACUUM"
+    end
+  end
+
+  describe "operational SQL with function qualification" do
+    it "qualifies both tables and functions in EXPLAIN statements" do
+      query = described_class.qualify_with_funcs("EXPLAIN SELECT custom_func(col1) FROM users", "public", ["custom_func"])
+      expect(query).to eq "EXPLAIN SELECT public.custom_func(col1) FROM public.users"
+    end
+
+    it "qualifies functions in EXPLAIN with complex queries" do
+      query = described_class.qualify_with_funcs("EXPLAIN ANALYZE SELECT encrypt_data(data) FROM logs WHERE custom_check(status)", "public", ["encrypt_data", "custom_check"])
+      expect(query).to eq "EXPLAIN (ANALYZE) SELECT public.encrypt_data(data) FROM public.logs WHERE public.custom_check(status)"
+    end
+
+    it "does not qualify functions in VACUUM statements (functions not relevant)" do
+      query = described_class.qualify_with_funcs("VACUUM users", "public", ["some_func"])
+      expect(query).to eq "VACUUM public.users"
+    end
+  end
+
+  describe "edge cases and error handling" do
+    it "returns nil for invalid operational SQL" do
+      query = described_class.qualify("VACUUM INVALID SYNTAX", "public")
+      expect(query).to be_nil
+    end
+
+    it "handles very long table names in operational statements" do
+      long_table_name = "a" * 60
+      query = described_class.qualify("VACUUM #{long_table_name}", "public")
+      expect(query).to eq "VACUUM public.#{long_table_name}"
+    end
+
+    it "handles unicode table names in operational statements" do
+      query = described_class.qualify("TRUNCATE ユーザー", "public")
+      expect(query).to eq "TRUNCATE public.\"ユーザー\""
+    end
+
+    it "preserves system catalogs across all operational statements" do
+      system_tables = ["pg_class", "pg_attribute", "pg_namespace"]
+      system_tables.each do |table|
+        ["VACUUM", "ANALYZE", "CLUSTER", "TRUNCATE"].each do |command|
+          # Skip TRUNCATE for system tables as it's not typically allowed
+          next if command == "TRUNCATE"
+
+          query = described_class.qualify("#{command} #{table}", "public")
+          expect(query).to eq "#{command} #{table}"
+        end
+      end
+    end
+  end
+
   describe "function qualification with qualify_with_funcs" do
     it "qualifies exact function name matches" do
       query = described_class.qualify_with_funcs("SELECT my_func(col1) FROM users", "public", ["my_func"])

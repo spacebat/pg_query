@@ -547,6 +547,46 @@ static void qualify_node(Node *node, const char *schema, List *cte_names, const 
             }
             break;
         }
+        case T_VacuumStmt: {
+            VacuumStmt *stmt = (VacuumStmt *) node;
+            // Qualify table references in VACUUM/ANALYZE statements
+            qualify_list(stmt->rels, schema, cte_names, func_names, func_count);
+            break;
+        }
+        case T_VacuumRelation: {
+            VacuumRelation *vacrel = (VacuumRelation *) node;
+            // Qualify the table reference in the vacuum relation
+            if (vacrel->relation) {
+                qualify_rangevar(vacrel->relation, schema, cte_names);
+            }
+            break;
+        }
+        case T_ClusterStmt: {
+            ClusterStmt *stmt = (ClusterStmt *) node;
+            // Qualify table reference in CLUSTER statement
+            if (stmt->relation) {
+                qualify_rangevar(stmt->relation, schema, cte_names);
+            }
+            break;
+        }
+        case T_TruncateStmt: {
+            TruncateStmt *stmt = (TruncateStmt *) node;
+            // Qualify table references in TRUNCATE statement
+            qualify_list(stmt->relations, schema, cte_names, func_names, func_count);
+            break;
+        }
+        case T_ExplainStmt: {
+            ExplainStmt *stmt = (ExplainStmt *) node;
+            // Qualify the query being explained
+            qualify_node(stmt->query, schema, cte_names, func_names, func_count);
+            break;
+        }
+        case T_LockStmt: {
+            LockStmt *stmt = (LockStmt *) node;
+            // Qualify table references in LOCK statement
+            qualify_list(stmt->relations, schema, cte_names, func_names, func_count);
+            break;
+        }
         case T_GrantStmt: {
             GrantStmt *stmt = (GrantStmt *) node;
             // Qualify the objects being granted on
