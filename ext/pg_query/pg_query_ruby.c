@@ -266,28 +266,41 @@ VALUE pg_query_ruby_qualify_with_funcs(VALUE self, VALUE sql_str, VALUE schema_s
 	// Convert Ruby array to C array
 	int func_count = RARRAY_LEN(func_names_array);
 	const char** func_names = NULL;
+	char* result = NULL;
+	VALUE output = Qnil;
 
 	if (func_count > 0) {
 		func_names = malloc(func_count * sizeof(char*));
+		if (!func_names) {
+			rb_raise(rb_eNoMemError, "Memory allocation failed for function names array");
+		}
+
+		// Convert array elements with exception safety
 		for (int i = 0; i < func_count; i++) {
 			VALUE func_name_val = rb_ary_entry(func_names_array, i);
-			Check_Type(func_name_val, T_STRING);
+			// Check_Type can raise exception - need cleanup if it fails
+			if (!RB_TYPE_P(func_name_val, T_STRING)) {
+				free(func_names);
+				rb_raise(rb_eTypeError, "Function name must be a string");
+			}
 			func_names[i] = StringValueCStr(func_name_val);
 		}
 	}
 
-	char* result = pg_query_qualify_sql_with_funcs(sql, schema, func_names, func_count);
+	// Call the C function
+	result = pg_query_qualify_sql_with_funcs(sql, schema, func_names, func_count);
 
+	// Build output with proper cleanup
+	if (result) {
+		output = rb_str_new_cstr(result);
+		rb_enc_associate(output, rb_utf8_encoding());
+		free(result);
+	}
+
+	// Always free func_names array
 	if (func_names) {
 		free(func_names);
 	}
 
-	if (result) {
-		VALUE output = rb_str_new_cstr(result);
-		rb_enc_associate(output, rb_utf8_encoding());
-		free(result);
-		return output;
-	} else {
-		return Qnil;
-	}
+	return output;
 }
