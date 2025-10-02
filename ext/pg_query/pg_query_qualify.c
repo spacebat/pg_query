@@ -732,6 +732,10 @@ char* pg_query_qualify_sql_with_funcs(const char *sql, const char *schema, const
             result = strdup(deparse_result.query);
             pg_query_free_deparse_result(deparse_result);
         }
+
+        if (qualified_protobuf.data) {
+            free(qualified_protobuf.data);
+        }
     }
     PG_CATCH();
     {
