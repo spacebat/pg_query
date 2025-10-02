@@ -396,11 +396,20 @@ static void qualify_node(Node *node, const char *schema, List *cte_names, const 
                                     if (body_node && IsA(body_node, String)) {
                                         String *body_str = (String *) body_node;
                                         // Parse the function body as SQL and qualify it
-                                        char *qualified_body = pg_query_qualify_sql(body_str->sval, schema);
+                                        char *qualified_body = NULL;
+                                        PG_TRY();
+                                        {
+                                        qualified_body = pg_query_qualify_sql(body_str->sval, schema);
+                                        }
+                                        PG_CATCH();
+                                        {
+                                          /* Ignore qualification errors in function bodies */
+                                        }
+                                        PG_END_TRY();
                                         if (qualified_body) {
-                                            // Replace the original body with the qualified version
-                                            body_str->sval = pstrdup(qualified_body);
-                                            free(qualified_body);
+                                          // Replace the original body with the qualified version
+                                          body_str->sval = pstrdup(qualified_body);
+                                          free(qualified_body);
                                         }
                                     }
                                 }
