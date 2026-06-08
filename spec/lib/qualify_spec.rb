@@ -1221,6 +1221,13 @@ describe PgQuery, '#qualify_with_filter' do
     ).to eq "SELECT * FROM public.users"
   end
 
+  it "defaults a nil filter_value to -1 when a filter_column is given" do
+    query = described_class.qualify_with_filter(
+      "SELECT * FROM users", "public", filter_column: "sbid", filter_value: nil
+    )
+    expect(query).to eq "SELECT * FROM public.users WHERE users.sbid = -1"
+  end
+
   it "filters a subquery inside a JOIN ON clause" do
     query = described_class.qualify_with_filter(
       "SELECT * FROM users u JOIN orders o ON o.id IN (SELECT id FROM items)", "public",
