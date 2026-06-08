@@ -952,7 +952,7 @@ static void filter_node(Node *node, const FilterSpec *spec) {
     }
 }
 
-char* pg_query_qualify_sql_with_funcs(const char *sql, const char *schema, const char **func_names, int func_count) {
+char* pg_query_qualify_sql_full(const char *sql, const char *schema, const char **func_names, int func_count, const char *filter_column, int filter_value, const char **filter_exclude, int filter_exclude_count) {
     PgQueryProtobufParseResult parse_result = {0};
     PgQueryDeparseResult deparse_result = {0};
     List *stmts;
@@ -984,6 +984,20 @@ char* pg_query_qualify_sql_with_funcs(const char *sql, const char *schema, const
             qualify_node(raw_stmt->stmt, schema, NULL, func_names, func_count);
         }
 
+        // Pass 2: inject row-restricting filter (only if a column was given).
+        if (filter_column) {
+            FilterSpec spec = {
+                .column = filter_column,
+                .value = filter_value,
+                .exclude = filter_exclude,
+                .exclude_count = filter_exclude_count
+            };
+            foreach(lc, stmts) {
+                RawStmt *raw_stmt = castNode(RawStmt, lfirst(lc));
+                filter_node(raw_stmt->stmt, &spec);
+            }
+        }
+
         // Convert back to protobuf
         PgQueryProtobuf qualified_protobuf = pg_query_nodes_to_protobuf(stmts);
 
@@ -1011,6 +1025,10 @@ char* pg_query_qualify_sql_with_funcs(const char *sql, const char *schema, const
     pg_query_free_protobuf_parse_result(parse_result);
 
     return result;
+}
+
+char* pg_query_qualify_sql_with_funcs(const char *sql, const char *schema, const char **func_names, int func_count) {
+    return pg_query_qualify_sql_full(sql, schema, func_names, func_count, NULL, 0, NULL, 0);
 }
 
 char* pg_query_qualify_sql(const char *sql, const char *schema) {
