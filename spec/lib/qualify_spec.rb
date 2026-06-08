@@ -1145,4 +1145,79 @@ describe PgQuery, '#qualify_with_filter' do
     )
     expect(query).to eq "SELECT * FROM public.users u FULL JOIN public.orders o ON u.id = o.user_id AND (u.sbid = 42 AND o.sbid = 42)"
   end
+
+  it "filters UPDATE target and USING/FROM tables" do
+    query = described_class.qualify_with_filter(
+      "UPDATE users SET name = 'a' FROM orders WHERE users.id = orders.user_id", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to eq "UPDATE public.users SET name = 'a' FROM public.orders WHERE users.id = orders.user_id AND (users.sbid = 42 AND orders.sbid = 42)"
+  end
+
+  it "filters a DELETE target table" do
+    query = described_class.qualify_with_filter(
+      "DELETE FROM users WHERE id = 1", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to eq "DELETE FROM public.users WHERE id = 1 AND users.sbid = 42"
+  end
+
+  it "filters inside a subquery and not the derived wrapper" do
+    query = described_class.qualify_with_filter(
+      "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to eq "SELECT * FROM public.users WHERE id IN (SELECT user_id FROM public.orders WHERE orders.sbid = 42) AND users.sbid = 42"
+  end
+
+  it "filters a CTE body at its definition" do
+    query = described_class.qualify_with_filter(
+      "WITH recent AS (SELECT * FROM orders) SELECT * FROM recent", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to eq "WITH recent AS (SELECT * FROM public.orders WHERE orders.sbid = 42) SELECT * FROM recent"
+  end
+
+  it "filters the SELECT of an INSERT ... SELECT but not INSERT ... VALUES" do
+    insert_select = described_class.qualify_with_filter(
+      "INSERT INTO audit (x) SELECT id FROM orders", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(insert_select).to eq "INSERT INTO public.audit (x) SELECT id FROM public.orders WHERE orders.sbid = 42"
+
+    insert_values = described_class.qualify_with_filter(
+      "INSERT INTO users (name) VALUES ('a')", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(insert_values).to eq "INSERT INTO public.users (name) VALUES ('a')"
+  end
+
+  it "skips tables on the exclusion list (exact and % prefix)" do
+    query = described_class.qualify_with_filter(
+      "SELECT * FROM users u JOIN countries c ON u.country_id = c.id JOIN lookup_x l ON l.id = u.lx", "public",
+      filter_column: "sbid", filter_value: 42, filter_exclude: ["countries", "lookup_%"]
+    )
+    expect(query).to eq "SELECT * FROM public.users u JOIN public.countries c ON u.country_id = c.id JOIN public.lookup_x l ON l.id = u.lx WHERE u.sbid = 42"
+  end
+
+  it "combines schema qualification, func qualification and filter in one call" do
+    query = described_class.qualify_with_filter(
+      "SELECT now_fn() FROM users", "public",
+      filter_column: "sbid", filter_value: 42, func_names: ["now_fn"]
+    )
+    expect(query).to eq "SELECT public.now_fn() FROM public.users WHERE users.sbid = 42"
+  end
+
+  it "returns nil for invalid SQL" do
+    expect(
+      described_class.qualify_with_filter("INVALID SQL", "public",
+                                          filter_column: "sbid", filter_value: 42)
+    ).to be_nil
+  end
+
+  it "behaves like plain qualify when no filter_column is given" do
+    expect(
+      described_class.qualify_with_filter("SELECT * FROM users", "public")
+    ).to eq "SELECT * FROM public.users"
+  end
 end
