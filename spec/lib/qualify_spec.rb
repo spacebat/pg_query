@@ -1097,4 +1097,28 @@ describe PgQuery, '#qualify_with_filter' do
     )
     expect(query).to eq "SELECT * FROM public.users WHERE users.sbid = 42"
   end
+
+  it "ANDs the filter into an existing WHERE" do
+    query = described_class.qualify_with_filter(
+      "SELECT * FROM users WHERE name = 'a'", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to eq "SELECT * FROM public.users WHERE name = 'a' AND users.sbid = 42"
+  end
+
+  it "filters every table of an inner JOIN in WHERE, qualified to its alias" do
+    query = described_class.qualify_with_filter(
+      "SELECT * FROM users u JOIN orders o ON u.id = o.user_id", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to eq "SELECT * FROM public.users u JOIN public.orders o ON u.id = o.user_id WHERE u.sbid = 42 AND o.sbid = 42"
+  end
+
+  it "uses the table name when there is no alias" do
+    query = described_class.qualify_with_filter(
+      "SELECT * FROM users JOIN orders ON users.id = orders.user_id", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to eq "SELECT * FROM public.users JOIN public.orders ON users.id = orders.user_id WHERE users.sbid = 42 AND orders.sbid = 42"
+  end
 end
