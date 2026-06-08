@@ -90,8 +90,8 @@ static void qualify_rangevar(RangeVar *rv, const char *schema, List *cte_names) 
 }
 
 static void qualify_node(Node *node, const char *schema, List *cte_names, const char **func_names, int func_count);
-static void filter_node(Node *node, const FilterSpec *spec);
-static void filter_collect_tables(Node *node, bool nullable, Node **where_accum, const FilterSpec *spec);
+static void filter_node(Node *node, List *cte_names, const FilterSpec *spec);
+static void filter_collect_tables(Node *node, bool nullable, Node **where_accum, List *cte_names, const FilterSpec *spec);
 
 char* pg_query_qualify_sql(const char *sql, const char *schema);
 
@@ -753,7 +753,7 @@ static void qualify_node(Node *node, const char *schema, List *cte_names, const 
 // *where_accum; a table on the nullable side of an outer join gets its
 // predicate AND-ed into that join's ON (quals). Derived tables / function
 // RTEs are recursed into (filter_node) but never get a wrapper predicate.
-static void filter_collect_tables(Node *node, bool nullable, Node **where_accum, const FilterSpec *spec) {
+static void filter_collect_tables(Node *node, bool nullable, Node **where_accum, List *cte_names, const FilterSpec *spec) {
     if (!node) return;
     check_stack_depth();
 
@@ -761,6 +761,13 @@ static void filter_collect_tables(Node *node, bool nullable, Node **where_accum,
         case T_RangeVar: {
             RangeVar *rv = (RangeVar *) node;
             if (!rv->relname) return;
+            // A CTE reference parses as a RangeVar but is not a real table; skip it.
+            if (cte_names) {
+                ListCell *lc;
+                foreach(lc, cte_names) {
+                    if (strcmp(rv->relname, (char *) lfirst(lc)) == 0) return;
+                }
+            }
             if (table_is_excluded(rv->relname, spec)) return;
             const char *ref = (rv->alias && rv->alias->aliasname)
                                   ? rv->alias->aliasname : rv->relname;
@@ -773,7 +780,7 @@ static void filter_collect_tables(Node *node, bool nullable, Node **where_accum,
         case T_RangeSubselect: {
             // Derived table: scope the inner query; do not filter the wrapper.
             RangeSubselect *sub = (RangeSubselect *) node;
-            filter_node(sub->subquery, spec);
+            filter_node(sub->subquery, cte_names, spec);
             break;
         }
         case T_RangeFunction:
@@ -792,21 +799,21 @@ static void filter_collect_tables(Node *node, bool nullable, Node **where_accum,
                 Node *on_accum = NULL;
                 // Left side
                 if (j->jointype == JOIN_RIGHT || j->jointype == JOIN_FULL) {
-                    filter_collect_tables(j->larg, left_nullable, &on_accum, spec);
+                    filter_collect_tables(j->larg, left_nullable, &on_accum, cte_names, spec);
                 } else {
-                    filter_collect_tables(j->larg, left_nullable, where_accum, spec);
+                    filter_collect_tables(j->larg, left_nullable, where_accum, cte_names, spec);
                 }
                 // Right side
                 if (j->jointype == JOIN_LEFT || j->jointype == JOIN_FULL) {
-                    filter_collect_tables(j->rarg, right_nullable, &on_accum, spec);
+                    filter_collect_tables(j->rarg, right_nullable, &on_accum, cte_names, spec);
                 } else {
-                    filter_collect_tables(j->rarg, right_nullable, where_accum, spec);
+                    filter_collect_tables(j->rarg, right_nullable, where_accum, cte_names, spec);
                 }
                 and_into(&j->quals, on_accum);
             } else {
                 // INNER / CROSS: both sides flow to the current accumulator.
-                filter_collect_tables(j->larg, left_nullable, where_accum, spec);
-                filter_collect_tables(j->rarg, right_nullable, where_accum, spec);
+                filter_collect_tables(j->larg, left_nullable, where_accum, cte_names, spec);
+                filter_collect_tables(j->rarg, right_nullable, where_accum, cte_names, spec);
             }
             break;
         }
@@ -817,135 +824,214 @@ static void filter_collect_tables(Node *node, bool nullable, Node **where_accum,
 
 // Scope-aware walk: injects filters into SELECT/UPDATE/DELETE scopes and
 // recurses into nested scopes (subqueries, CTEs, INSERT...SELECT, view/CTAS).
-static void filter_node(Node *node, const FilterSpec *spec) {
+static void filter_node(Node *node, List *cte_names, const FilterSpec *spec) {
     if (!node || !spec || !spec->column) return;
     check_stack_depth();
 
     switch (nodeTag(node)) {
         case T_SelectStmt: {
             SelectStmt *stmt = (SelectStmt *) node;
+            List *stmt_cte_names = cte_names;
 
-            // Recurse into CTEs first (their bodies are their own scopes).
+            // Build the CTE scope for this statement (mirrors qualify_node).
             if (stmt->withClause) {
+                WithClause *with = (WithClause *) stmt->withClause;
+                List *local_cte_names = list_copy(cte_names);
                 ListCell *lc;
-                foreach(lc, ((WithClause *) stmt->withClause)->ctes) {
-                    CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
-                    filter_node(cte->ctequery, spec);
+
+                if (with->recursive) {
+                    // WITH RECURSIVE: add all names first, then process bodies.
+                    foreach(lc, with->ctes) {
+                        CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+                        local_cte_names = lappend(local_cte_names, cte->ctename);
+                    }
+                    foreach(lc, with->ctes) {
+                        CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+                        filter_node(cte->ctequery, local_cte_names, spec);
+                    }
+                } else {
+                    // Non-recursive: process each body, then add its name to scope.
+                    foreach(lc, with->ctes) {
+                        CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+                        filter_node(cte->ctequery, local_cte_names, spec);
+                        local_cte_names = lappend(local_cte_names, cte->ctename);
+                    }
                 }
+                stmt_cte_names = local_cte_names;
             }
 
             // Set operations (UNION etc.) recurse into both arms.
-            if (stmt->larg) filter_node((Node *) stmt->larg, spec);
-            if (stmt->rarg) filter_node((Node *) stmt->rarg, spec);
+            if (stmt->larg) filter_node((Node *) stmt->larg, stmt_cte_names, spec);
+            if (stmt->rarg) filter_node((Node *) stmt->rarg, stmt_cte_names, spec);
 
             // Collect tables from this scope's FROM list into a WHERE accumulator.
             Node *where_accum = NULL;
             ListCell *lc;
             foreach(lc, stmt->fromClause) {
-                filter_collect_tables((Node *) lfirst(lc), false, &where_accum, spec);
+                filter_collect_tables((Node *) lfirst(lc), false, &where_accum, stmt_cte_names, spec);
             }
             and_into(&stmt->whereClause, where_accum);
 
             // Recurse into subqueries that appear in expressions (WHERE IN (...), etc.)
-            filter_node((Node *) stmt->whereClause, spec);
+            filter_node((Node *) stmt->whereClause, stmt_cte_names, spec);
             // Recurse into subqueries in the SELECT target list (e.g. SELECT (SELECT ...)).
             {
                 ListCell *tl;
                 foreach(tl, stmt->targetList) {
                     ResTarget *rt = (ResTarget *) lfirst(tl);
-                    filter_node(rt->val, spec);
+                    filter_node(rt->val, stmt_cte_names, spec);
                 }
             }
             // Recurse into subqueries in HAVING clause.
-            filter_node((Node *) stmt->havingClause, spec);
+            filter_node((Node *) stmt->havingClause, stmt_cte_names, spec);
             break;
         }
         case T_UpdateStmt: {
             UpdateStmt *stmt = (UpdateStmt *) node;
+            List *stmt_cte_names = cte_names;
+
             if (stmt->withClause) {
+                WithClause *with = (WithClause *) stmt->withClause;
+                List *local_cte_names = list_copy(cte_names);
                 ListCell *lc;
-                foreach(lc, ((WithClause *) stmt->withClause)->ctes) {
-                    filter_node(((CommonTableExpr *) lfirst(lc))->ctequery, spec);
+
+                if (with->recursive) {
+                    foreach(lc, with->ctes) {
+                        CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+                        local_cte_names = lappend(local_cte_names, cte->ctename);
+                    }
+                    foreach(lc, with->ctes) {
+                        CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+                        filter_node(cte->ctequery, local_cte_names, spec);
+                    }
+                } else {
+                    foreach(lc, with->ctes) {
+                        CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+                        filter_node(cte->ctequery, local_cte_names, spec);
+                        local_cte_names = lappend(local_cte_names, cte->ctename);
+                    }
                 }
+                stmt_cte_names = local_cte_names;
             }
+
             Node *where_accum = NULL;
             // Target relation (non-nullable).
-            filter_collect_tables((Node *) stmt->relation, false, &where_accum, spec);
+            filter_collect_tables((Node *) stmt->relation, false, &where_accum, stmt_cte_names, spec);
             // Additional FROM tables.
             ListCell *lc;
             foreach(lc, stmt->fromClause) {
-                filter_collect_tables((Node *) lfirst(lc), false, &where_accum, spec);
+                filter_collect_tables((Node *) lfirst(lc), false, &where_accum, stmt_cte_names, spec);
             }
             and_into(&stmt->whereClause, where_accum);
-            filter_node((Node *) stmt->whereClause, spec);
+            filter_node((Node *) stmt->whereClause, stmt_cte_names, spec);
             // Recurse into subqueries in SET-clause expressions (e.g. SET col = (SELECT ...)).
             {
                 ListCell *tl;
                 foreach(tl, stmt->targetList) {
                     ResTarget *rt = (ResTarget *) lfirst(tl);
-                    filter_node(rt->val, spec);
+                    filter_node(rt->val, stmt_cte_names, spec);
                 }
             }
             break;
         }
         case T_DeleteStmt: {
             DeleteStmt *stmt = (DeleteStmt *) node;
+            List *stmt_cte_names = cte_names;
+
             if (stmt->withClause) {
+                WithClause *with = (WithClause *) stmt->withClause;
+                List *local_cte_names = list_copy(cte_names);
                 ListCell *lc;
-                foreach(lc, ((WithClause *) stmt->withClause)->ctes) {
-                    filter_node(((CommonTableExpr *) lfirst(lc))->ctequery, spec);
+
+                if (with->recursive) {
+                    foreach(lc, with->ctes) {
+                        CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+                        local_cte_names = lappend(local_cte_names, cte->ctename);
+                    }
+                    foreach(lc, with->ctes) {
+                        CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+                        filter_node(cte->ctequery, local_cte_names, spec);
+                    }
+                } else {
+                    foreach(lc, with->ctes) {
+                        CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+                        filter_node(cte->ctequery, local_cte_names, spec);
+                        local_cte_names = lappend(local_cte_names, cte->ctename);
+                    }
                 }
+                stmt_cte_names = local_cte_names;
             }
+
             Node *where_accum = NULL;
-            filter_collect_tables((Node *) stmt->relation, false, &where_accum, spec);
+            filter_collect_tables((Node *) stmt->relation, false, &where_accum, stmt_cte_names, spec);
             ListCell *lc;
             foreach(lc, stmt->usingClause) {
-                filter_collect_tables((Node *) lfirst(lc), false, &where_accum, spec);
+                filter_collect_tables((Node *) lfirst(lc), false, &where_accum, stmt_cte_names, spec);
             }
             and_into(&stmt->whereClause, where_accum);
-            filter_node((Node *) stmt->whereClause, spec);
+            filter_node((Node *) stmt->whereClause, stmt_cte_names, spec);
             break;
         }
         case T_InsertStmt: {
             InsertStmt *stmt = (InsertStmt *) node;
+            List *stmt_cte_names = cte_names;
+
             if (stmt->withClause) {
+                WithClause *with = (WithClause *) stmt->withClause;
+                List *local_cte_names = list_copy(cte_names);
                 ListCell *lc;
-                foreach(lc, ((WithClause *) stmt->withClause)->ctes) {
-                    filter_node(((CommonTableExpr *) lfirst(lc))->ctequery, spec);
+
+                if (with->recursive) {
+                    foreach(lc, with->ctes) {
+                        CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+                        local_cte_names = lappend(local_cte_names, cte->ctename);
+                    }
+                    foreach(lc, with->ctes) {
+                        CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+                        filter_node(cte->ctequery, local_cte_names, spec);
+                    }
+                } else {
+                    foreach(lc, with->ctes) {
+                        CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
+                        filter_node(cte->ctequery, local_cte_names, spec);
+                        local_cte_names = lappend(local_cte_names, cte->ctename);
+                    }
                 }
+                stmt_cte_names = local_cte_names;
             }
+
             // INSERT ... SELECT: scope the SELECT. INSERT ... VALUES: nothing.
-            if (stmt->selectStmt) filter_node(stmt->selectStmt, spec);
+            if (stmt->selectStmt) filter_node(stmt->selectStmt, stmt_cte_names, spec);
             break;
         }
         case T_SubLink: {
             SubLink *sublink = (SubLink *) node;
-            filter_node(sublink->subselect, spec);
-            filter_node(sublink->testexpr, spec);
+            filter_node(sublink->subselect, cte_names, spec);
+            filter_node(sublink->testexpr, cte_names, spec);
             break;
         }
         case T_BoolExpr: {
             // Recurse so subqueries nested inside AND/OR get scoped.
             ListCell *lc;
             foreach(lc, ((BoolExpr *) node)->args) {
-                filter_node((Node *) lfirst(lc), spec);
+                filter_node((Node *) lfirst(lc), cte_names, spec);
             }
             break;
         }
         case T_A_Expr: {
             A_Expr *aexpr = (A_Expr *) node;
-            filter_node(aexpr->lexpr, spec);
-            filter_node(aexpr->rexpr, spec);
+            filter_node(aexpr->lexpr, cte_names, spec);
+            filter_node(aexpr->rexpr, cte_names, spec);
             break;
         }
         case T_CreateTableAsStmt:
-            filter_node(((CreateTableAsStmt *) node)->query, spec);
+            filter_node(((CreateTableAsStmt *) node)->query, cte_names, spec);
             break;
         case T_ViewStmt:
-            filter_node(((ViewStmt *) node)->query, spec);
+            filter_node(((ViewStmt *) node)->query, cte_names, spec);
             break;
         case T_ExplainStmt:
-            filter_node(((ExplainStmt *) node)->query, spec);
+            filter_node(((ExplainStmt *) node)->query, cte_names, spec);
             break;
         default:
             break;
@@ -994,7 +1080,7 @@ char* pg_query_qualify_sql_full(const char *sql, const char *schema, const char 
             };
             foreach(lc, stmts) {
                 RawStmt *raw_stmt = castNode(RawStmt, lfirst(lc));
-                filter_node(raw_stmt->stmt, &spec);
+                filter_node(raw_stmt->stmt, NIL, &spec);
             }
         }
 
