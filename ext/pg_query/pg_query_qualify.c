@@ -848,6 +848,16 @@ static void filter_node(Node *node, const FilterSpec *spec) {
 
             // Recurse into subqueries that appear in expressions (WHERE IN (...), etc.)
             filter_node((Node *) stmt->whereClause, spec);
+            // Recurse into subqueries in the SELECT target list (e.g. SELECT (SELECT ...)).
+            {
+                ListCell *tl;
+                foreach(tl, stmt->targetList) {
+                    ResTarget *rt = (ResTarget *) lfirst(tl);
+                    filter_node(rt->val, spec);
+                }
+            }
+            // Recurse into subqueries in HAVING clause.
+            filter_node((Node *) stmt->havingClause, spec);
             break;
         }
         case T_UpdateStmt: {
@@ -868,6 +878,14 @@ static void filter_node(Node *node, const FilterSpec *spec) {
             }
             and_into(&stmt->whereClause, where_accum);
             filter_node((Node *) stmt->whereClause, spec);
+            // Recurse into subqueries in SET-clause expressions (e.g. SET col = (SELECT ...)).
+            {
+                ListCell *tl;
+                foreach(tl, stmt->targetList) {
+                    ResTarget *rt = (ResTarget *) lfirst(tl);
+                    filter_node(rt->val, spec);
+                }
+            }
             break;
         }
         case T_DeleteStmt: {
