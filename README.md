@@ -90,6 +90,74 @@ parsed_query.deparse
 => "SELECT * FROM other_users"
 ```
 
+### Schema-qualifying and filtering a query
+
+`PgQuery.qualify` rewrites a query so every unqualified table name is prefixed
+with a schema. `PgQuery.qualify_with_funcs` additionally schema-qualifies the
+named functions.
+
+```ruby
+PgQuery.qualify("SELECT * FROM users", "public")
+=> "SELECT * FROM public.users"
+
+PgQuery.qualify_with_funcs("SELECT now_fn() FROM users", "public", ["now_fn"])
+=> "SELECT public.now_fn() FROM public.users"
+```
+
+`PgQuery.qualify_with_filter` does the same schema qualification and, when given
+a `filter_column` and `filter_value`, also injects a per-table row-restricting
+predicate (e.g. `sbid = 42`) into every part of the query that selects or
+affects rows. Each real table reference — at any nesting depth, in subqueries,
+CTE bodies, `JOIN ... ON`, `INSERT ... SELECT`, and expressions — is constrained
+to the value, so a query cannot read or modify rows belonging to another value.
+
+```ruby
+PgQuery.qualify_with_filter(
+  "SELECT * FROM users u LEFT JOIN orders o ON u.id = o.user_id",
+  "public",
+  filter_column: "sbid",
+  filter_value: 42
+)
+=> "SELECT * FROM public.users u " \
+   "LEFT JOIN public.orders o ON u.id = o.user_id AND o.sbid = 42 " \
+   "WHERE u.sbid = 42"
+```
+
+Note that the nullable side of an outer join (`orders` above) is filtered in the
+join's `ON` clause rather than in `WHERE`, which preserves the outer join's
+result shape instead of silently collapsing it to an inner join.
+
+Keyword arguments:
+
+* `filter_column:` / `filter_value:` — the predicate to inject (`column =
+  value`). `value` is an integer. A `nil` `filter_value` defaults to `-1`, so a
+  misconfigured caller fails closed (matches no row) instead of emitting an
+  unfiltered query. Omitting `filter_column` (the default) skips filtering
+  entirely, behaving exactly like `PgQuery.qualify`.
+* `filter_exclude:` — table names that must **not** receive the filter, for
+  reference/lookup tables that lack the column. Matching is against the table's
+  name: exact, or a `%`-suffix prefix match (e.g. `"lookup_%"`). A non-excluded
+  table that lacks the column will produce SQL that Postgres rejects at
+  execution — configuring this list correctly is the caller's responsibility.
+* `func_names:` — function names to schema-qualify, as in
+  `qualify_with_funcs`.
+
+```ruby
+PgQuery.qualify_with_filter(
+  "SELECT * FROM users u JOIN countries c ON u.country_id = c.id",
+  "public",
+  filter_column: "sbid",
+  filter_value: 42,
+  filter_exclude: ["countries", "lookup_%"]
+)
+=> "SELECT * FROM public.users u " \
+   "JOIN public.countries c ON u.country_id = c.id " \
+   "WHERE u.sbid = 42"
+```
+
+All three methods return the rewritten SQL, or `nil` if the query fails to
+parse or deparse.
+
 ### Parsing a normalized query
 
 ```ruby

@@ -2,7 +2,21 @@
 
 ## Unreleased
 
-* ...
+* Add `PgQuery.qualify_with_filter`, which schema-qualifies a query (like
+  `PgQuery.qualify`) and optionally injects a per-table row-restricting filter
+  (e.g. `sbid = 42`) into every `WHERE` clause and outer-join `ON` clause, so
+  that every real table reference in the query is scoped to a single value.
+  - The filter is applied to every table at any nesting depth — subqueries,
+    CTE bodies, `JOIN ... ON`, `INSERT ... SELECT`, and expressions such as
+    `coalesce`/`CASE`/`IN` lists and `ORDER BY`/`GROUP BY`/`LIMIT`.
+  - Outer-join result shape is preserved: the nullable side of a `LEFT`/
+    `RIGHT`/`FULL` join is filtered in that join's `ON` clause rather than in
+    `WHERE`, so an outer join is not silently collapsed to an inner join.
+  - `filter_exclude` skips named tables (exact match, or `%`-suffix prefix
+    match) that do not have the filter column.
+  - A `nil` `filter_value` defaults to `-1`, so a misconfigured caller fails
+    closed (matches no row) rather than emitting an unfiltered query.
+  - `PgQuery.qualify` and `PgQuery.qualify_with_funcs` are unchanged.
 
 ## 6.1.0     2025-04-02
 
