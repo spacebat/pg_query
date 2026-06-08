@@ -62,6 +62,9 @@ Style/ModuleFunction:
 Metrics/MethodLength:
   Enabled: false
 
+Metrics/ParameterLists:
+  Enabled: false
+
 Metrics/ClassLength:
   Enabled: false
 
