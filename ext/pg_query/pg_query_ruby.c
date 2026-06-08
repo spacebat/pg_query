@@ -19,6 +19,7 @@ VALUE pg_query_ruby_hash_xxh3_64(VALUE self, VALUE input, VALUE seed);
 VALUE pg_query_ruby_qualify(VALUE self, VALUE sql_str, VALUE schema_str);
 VALUE pg_query_ruby_qualify_with_funcs(VALUE self, VALUE sql_str, VALUE schema_str, VALUE func_names_array);
 VALUE pg_query_ruby_qualify_full(VALUE self, VALUE sql_str, VALUE schema_str, VALUE func_names_array, VALUE filter_column, VALUE filter_value, VALUE filter_exclude_array);
+static const char** ruby_string_array_to_c(VALUE array, int *out_count);
 
 __attribute__((visibility ("default"))) void Init_pg_query(void)
 {
