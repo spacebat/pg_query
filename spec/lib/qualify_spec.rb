@@ -1121,4 +1121,28 @@ describe PgQuery, '#qualify_with_filter' do
     )
     expect(query).to eq "SELECT * FROM public.users JOIN public.orders ON users.id = orders.user_id WHERE users.sbid = 42 AND orders.sbid = 42"
   end
+
+  it "puts the nullable side of a LEFT JOIN into the ON clause" do
+    query = described_class.qualify_with_filter(
+      "SELECT * FROM users u LEFT JOIN orders o ON u.id = o.user_id", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to eq "SELECT * FROM public.users u LEFT JOIN public.orders o ON u.id = o.user_id AND o.sbid = 42 WHERE u.sbid = 42"
+  end
+
+  it "puts the nullable side of a RIGHT JOIN into the ON clause" do
+    query = described_class.qualify_with_filter(
+      "SELECT * FROM users u RIGHT JOIN orders o ON u.id = o.user_id", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to eq "SELECT * FROM public.users u RIGHT JOIN public.orders o ON u.id = o.user_id AND u.sbid = 42 WHERE o.sbid = 42"
+  end
+
+  it "puts both sides of a FULL JOIN into the ON clause" do
+    query = described_class.qualify_with_filter(
+      "SELECT * FROM users u FULL JOIN orders o ON u.id = o.user_id", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to eq "SELECT * FROM public.users u FULL JOIN public.orders o ON u.id = o.user_id AND (u.sbid = 42 AND o.sbid = 42)"
+  end
 end
