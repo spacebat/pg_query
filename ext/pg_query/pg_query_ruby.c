@@ -18,6 +18,7 @@ VALUE pg_query_ruby_scan(VALUE self, VALUE input);
 VALUE pg_query_ruby_hash_xxh3_64(VALUE self, VALUE input, VALUE seed);
 VALUE pg_query_ruby_qualify(VALUE self, VALUE sql_str, VALUE schema_str);
 VALUE pg_query_ruby_qualify_with_funcs(VALUE self, VALUE sql_str, VALUE schema_str, VALUE func_names_array);
+VALUE pg_query_ruby_qualify_full(VALUE self, VALUE sql_str, VALUE schema_str, VALUE func_names_array, VALUE filter_column, VALUE filter_value, VALUE filter_exclude_array);
 
 __attribute__((visibility ("default"))) void Init_pg_query(void)
 {
@@ -33,6 +34,7 @@ __attribute__((visibility ("default"))) void Init_pg_query(void)
 	rb_define_singleton_method(cPgQuery, "hash_xxh3_64", pg_query_ruby_hash_xxh3_64, 2);
 	rb_define_singleton_method(cPgQuery, "qualify", pg_query_ruby_qualify, 2);
 	rb_define_singleton_method(cPgQuery, "qualify_with_funcs", pg_query_ruby_qualify_with_funcs, 3);
+	rb_define_singleton_method(cPgQuery, "qualify_full", pg_query_ruby_qualify_full, 6);
 	rb_define_const(cPgQuery, "PG_VERSION", rb_str_new2(PG_VERSION));
 	rb_define_const(cPgQuery, "PG_MAJORVERSION", rb_str_new2(PG_MAJORVERSION));
 	rb_define_const(cPgQuery, "PG_VERSION_NUM", INT2NUM(PG_VERSION_NUM));
@@ -301,6 +303,66 @@ VALUE pg_query_ruby_qualify_with_funcs(VALUE self, VALUE sql_str, VALUE schema_s
 	if (func_names) {
 		free(func_names);
 	}
+
+	return output;
+}
+
+static const char** ruby_string_array_to_c(VALUE array, int *out_count) {
+	int count = RARRAY_LEN(array);
+	*out_count = count;
+	if (count == 0) return NULL;
+	const char** result = malloc(count * sizeof(char*));
+	if (!result) {
+		rb_raise(rb_eNoMemError, "Memory allocation failed for string array");
+	}
+	for (int i = 0; i < count; i++) {
+		VALUE v = rb_ary_entry(array, i);
+		if (!RB_TYPE_P(v, T_STRING)) {
+			free(result);
+			rb_raise(rb_eTypeError, "Array element must be a string");
+		}
+		result[i] = StringValueCStr(v);
+	}
+	return result;
+}
+
+VALUE pg_query_ruby_qualify_full(VALUE self, VALUE sql_str, VALUE schema_str, VALUE func_names_array, VALUE filter_column, VALUE filter_value, VALUE filter_exclude_array) {
+	Check_Type(sql_str, T_STRING);
+	Check_Type(schema_str, T_STRING);
+	Check_Type(func_names_array, T_ARRAY);
+	Check_Type(filter_exclude_array, T_ARRAY);
+
+	const char* sql = StringValueCStr(sql_str);
+	const char* schema = StringValueCStr(schema_str);
+
+	int func_count = 0;
+	const char** func_names = ruby_string_array_to_c(func_names_array, &func_count);
+
+	int exclude_count = 0;
+	const char** filter_exclude = NULL;
+	const char* column = NULL;
+	int value = 0;
+	char* result = NULL;
+	VALUE output = Qnil;
+
+	// filter_column is a String when filtering is requested, nil otherwise.
+	if (!NIL_P(filter_column)) {
+		Check_Type(filter_column, T_STRING);
+		column = StringValueCStr(filter_column);
+		value = NUM2INT(filter_value);
+		filter_exclude = ruby_string_array_to_c(filter_exclude_array, &exclude_count);
+	}
+
+	result = pg_query_qualify_sql_full(sql, schema, func_names, func_count, column, value, filter_exclude, exclude_count);
+
+	if (result) {
+		output = rb_str_new_cstr(result);
+		rb_enc_associate(output, rb_utf8_encoding());
+		free(result);
+	}
+
+	if (func_names) free(func_names);
+	if (filter_exclude) free(filter_exclude);
 
 	return output;
 }
