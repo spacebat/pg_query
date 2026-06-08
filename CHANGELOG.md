@@ -14,8 +14,9 @@
     `WHERE`, so an outer join is not silently collapsed to an inner join.
   - `filter_exclude` skips named tables (exact match, or `%`-suffix prefix
     match) that do not have the filter column.
-  - A `nil` `filter_value` defaults to `-1`, so a misconfigured caller fails
-    closed (matches no row) rather than emitting an unfiltered query.
+  - Filter injection happens only when both `filter_column` and `filter_value`
+    are given; a `nil` `filter_value` (e.g. no current tenant) skips the filter
+    walk and produces a plainly qualified query.
   - `PgQuery.qualify` and `PgQuery.qualify_with_funcs` are unchanged.
 
 ## 6.1.0     2025-04-02

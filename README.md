@@ -130,10 +130,10 @@ result shape instead of silently collapsing it to an inner join.
 Keyword arguments:
 
 * `filter_column:` / `filter_value:` — the predicate to inject (`column =
-  value`). `value` is an integer. A `nil` `filter_value` defaults to `-1`, so a
-  misconfigured caller fails closed (matches no row) instead of emitting an
-  unfiltered query. Omitting `filter_column` (the default) skips filtering
-  entirely, behaving exactly like `PgQuery.qualify`.
+  value`). `value` is an integer. Filtering happens only when **both** are
+  given; if either `filter_column` or `filter_value` is `nil` (the defaults),
+  filtering is skipped entirely and the call behaves exactly like
+  `PgQuery.qualify` (schema qualification only, no row restriction).
 * `filter_exclude:` — table names that must **not** receive the filter, for
   reference/lookup tables that lack the column. Matching is against the table's
   name: exact, or a `%`-suffix prefix match (e.g. `"lookup_%"`). A non-excluded
