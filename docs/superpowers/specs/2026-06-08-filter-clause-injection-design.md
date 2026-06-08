@@ -192,15 +192,31 @@ missing side is not data from another `sbid`, it is simply absent.
 Each of these inner queries is its own scope and receives the same treatment:
 
 - Subqueries in `FROM` (`RangeSubselect`)
-- Subqueries in expressions (`SubLink` — e.g. `WHERE id IN (SELECT ...)`)
-- Subqueries in the target list
+- Subqueries in expressions (`SubLink`), reached **anywhere** an expression can
+  appear, not just the obvious clauses. Pass 2 descends every expression subtree
+  with PostgreSQL's `raw_expression_tree_walker`, so a subquery hidden inside a
+  `coalesce(...)`, `CASE`, function argument, `IN (..., (SELECT ...))` value
+  list, a `JOIN ... ON` predicate, `ORDER BY` / `GROUP BY` / `DISTINCT ON`,
+  `LIMIT` / `OFFSET`, a `VALUES` list, or an `ON CONFLICT DO UPDATE SET` is still
+  found and scoped. (Earlier iterations enumerated a fixed set of expression node
+  types and leaked subqueries nested under any unenumerated container — using the
+  generic walker closes that whole class.)
+- Subqueries in the target list and `HAVING`
 - CTE bodies (`WITH ... AS (SELECT ...)`) — filtered at the definition site
 - `INSERT ... SELECT` — the SELECT is scoped
 - `CREATE VIEW AS`, `CREATE TABLE AS` — the defining query is scoped
 
 CTE *references* appearing in a FROM clause are treated like derived tables: the
 wrapper is not filtered (it has no `sbid`); the CTE body is filtered where it is
-defined.
+defined. CTE-name scoping mirrors the existing `qualify_node` mechanism (a
+`cte_names` list threaded through the walk, honoring `WITH RECURSIVE` ordering),
+so a real table is never suppressed except where its name genuinely shadows a CTE
+in scope (the same trade-off the qualification pass already makes).
+
+The reach goal is concrete: **every real table reference, at any nesting depth,
+in any clause, receives its `sbid` predicate.** The generic expression walker is
+what makes that guarantee hold rather than depending on a hand-maintained list of
+clauses.
 
 ### Statements with nothing to filter
 
