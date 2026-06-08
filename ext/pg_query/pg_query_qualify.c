@@ -6,6 +6,7 @@
 #include "postgres.h"
 #include "nodes/nodes.h"
 #include "nodes/parsenodes.h"
+#include "nodes/nodeFuncs.h"
 #include "nodes/pg_list.h"
 #include "utils/memutils.h"
 #include "miscadmin.h"
@@ -17,6 +18,13 @@ typedef struct FilterSpec {
     const char **exclude;          // table names to skip (relname); may be NULL
     int exclude_count;             // length of exclude
 } FilterSpec;
+
+// Context bundle passed through raw_expression_tree_walker, which only
+// accepts a single void* context. Pairs the active CTE scope with the spec.
+typedef struct FilterWalkContext {
+    List *cte_names;
+    const FilterSpec *spec;
+} FilterWalkContext;
 
 // Match a table name against the exclusion list. Reuses the same
 // exact/prefix(%)-match convention as should_qualify_function.
@@ -92,6 +100,7 @@ static void qualify_rangevar(RangeVar *rv, const char *schema, List *cte_names) 
 static void qualify_node(Node *node, const char *schema, List *cte_names, const char **func_names, int func_count);
 static void filter_node(Node *node, List *cte_names, const FilterSpec *spec);
 static void filter_collect_tables(Node *node, bool nullable, Node **where_accum, List *cte_names, const FilterSpec *spec);
+static bool filter_walker_cb(Node *node, void *context);
 
 char* pg_query_qualify_sql(const char *sql, const char *schema);
 
@@ -815,6 +824,10 @@ static void filter_collect_tables(Node *node, bool nullable, Node **where_accum,
                 filter_collect_tables(j->larg, left_nullable, where_accum, cte_names, spec);
                 filter_collect_tables(j->rarg, right_nullable, where_accum, cte_names, spec);
             }
+            // Recurse into the ON expression to scope any nested subqueries.
+            // (Injected sbid predicates contain no SubLink, so re-walking
+            // quals after AND-ing is harmless.)
+            filter_node(j->quals, cte_names, spec);
             break;
         }
         default:
@@ -1010,20 +1023,6 @@ static void filter_node(Node *node, List *cte_names, const FilterSpec *spec) {
             filter_node(sublink->testexpr, cte_names, spec);
             break;
         }
-        case T_BoolExpr: {
-            // Recurse so subqueries nested inside AND/OR get scoped.
-            ListCell *lc;
-            foreach(lc, ((BoolExpr *) node)->args) {
-                filter_node((Node *) lfirst(lc), cte_names, spec);
-            }
-            break;
-        }
-        case T_A_Expr: {
-            A_Expr *aexpr = (A_Expr *) node;
-            filter_node(aexpr->lexpr, cte_names, spec);
-            filter_node(aexpr->rexpr, cte_names, spec);
-            break;
-        }
         case T_CreateTableAsStmt:
             filter_node(((CreateTableAsStmt *) node)->query, cte_names, spec);
             break;
@@ -1033,9 +1032,28 @@ static void filter_node(Node *node, List *cte_names, const FilterSpec *spec) {
         case T_ExplainStmt:
             filter_node(((ExplainStmt *) node)->query, cte_names, spec);
             break;
-        default:
+        default: {
+            // Generic descent for any other expression node (BoolExpr, A_Expr,
+            // FuncCall, CaseExpr, CoalesceExpr, IN-lists, etc.). The walker
+            // visits each direct child; the adapter routes each child back
+            // through filter_node, which scopes any SubLink it finds and keeps
+            // descending through intermediate expression nodes. Statement and
+            // scope nodes (SelectStmt, SubLink, ...) are handled by their own
+            // cases when reached, so FROM clauses are never double-walked.
+            FilterWalkContext ctx = { .cte_names = cte_names, .spec = spec };
+            raw_expression_tree_walker(node, filter_walker_cb, &ctx);
             break;
+        }
     }
+}
+
+// Adapter for raw_expression_tree_walker: unpacks the context and routes each
+// visited child back through filter_node. Returns false so the walk continues
+// across all siblings (true would short-circuit the walk).
+static bool filter_walker_cb(Node *node, void *context) {
+    FilterWalkContext *ctx = (FilterWalkContext *) context;
+    filter_node(node, ctx->cte_names, ctx->spec);
+    return false;
 }
 
 char* pg_query_qualify_sql_full(const char *sql, const char *schema, const char **func_names, int func_count, const char *filter_column, int filter_value, const char **filter_exclude, int filter_exclude_count) {

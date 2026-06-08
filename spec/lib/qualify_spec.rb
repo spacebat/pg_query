@@ -1220,4 +1220,42 @@ describe PgQuery, '#qualify_with_filter' do
       described_class.qualify_with_filter("SELECT * FROM users", "public")
     ).to eq "SELECT * FROM public.users"
   end
+
+  it "filters a subquery inside a JOIN ON clause" do
+    query = described_class.qualify_with_filter(
+      "SELECT * FROM users u JOIN orders o ON o.id IN (SELECT id FROM items)", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    # items (inside the ON subquery) must be filtered; users and orders filtered in WHERE
+    expect(query).to include "FROM public.items WHERE items.sbid = 42"
+    expect(query).to include "u.sbid = 42"
+    expect(query).to include "o.sbid = 42"
+  end
+
+  it "filters a subquery nested inside coalesce() in the target list" do
+    query = described_class.qualify_with_filter(
+      "SELECT coalesce((SELECT a FROM items), 0) FROM users", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to include "FROM public.items WHERE items.sbid = 42"
+    expect(query).to include "FROM public.users WHERE users.sbid = 42"
+  end
+
+  it "filters a subquery inside an IN value-list" do
+    query = described_class.qualify_with_filter(
+      "SELECT * FROM users WHERE x IN (1, (SELECT a FROM items))", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to include "FROM public.items WHERE items.sbid = 42"
+    expect(query).to include "users.sbid = 42"
+  end
+
+  it "filters a subquery inside a CASE expression" do
+    query = described_class.qualify_with_filter(
+      "SELECT * FROM users WHERE (CASE WHEN x > 0 THEN (SELECT a FROM items) ELSE 0 END) = 1", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to include "FROM public.items WHERE items.sbid = 42"
+    expect(query).to include "users.sbid = 42"
+  end
 end
