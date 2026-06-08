@@ -1258,4 +1258,48 @@ describe PgQuery, '#qualify_with_filter' do
     expect(query).to include "FROM public.items WHERE items.sbid = 42"
     expect(query).to include "users.sbid = 42"
   end
+
+  it "filters a subquery in ORDER BY" do
+    query = described_class.qualify_with_filter(
+      "SELECT * FROM users ORDER BY (SELECT a FROM items)", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to include "FROM public.items WHERE items.sbid = 42"
+    expect(query).to include "users.sbid = 42"
+  end
+
+  it "filters a subquery in GROUP BY" do
+    query = described_class.qualify_with_filter(
+      "SELECT count(*) FROM users GROUP BY (SELECT a FROM items)", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to include "FROM public.items WHERE items.sbid = 42"
+    expect(query).to include "users.sbid = 42"
+  end
+
+  it "filters a subquery in a LIMIT expression" do
+    query = described_class.qualify_with_filter(
+      "SELECT * FROM users LIMIT (SELECT a FROM items)", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to include "FROM public.items WHERE items.sbid = 42"
+    expect(query).to include "users.sbid = 42"
+  end
+
+  it "filters a subquery in DISTINCT ON" do
+    query = described_class.qualify_with_filter(
+      "SELECT DISTINCT ON ((SELECT a FROM items)) * FROM users", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to include "FROM public.items WHERE items.sbid = 42"
+    expect(query).to include "users.sbid = 42"
+  end
+
+  it "filters a subquery in an ON CONFLICT DO UPDATE SET" do
+    query = described_class.qualify_with_filter(
+      "INSERT INTO users (id) VALUES (1) ON CONFLICT (id) DO UPDATE SET x = (SELECT a FROM items)", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to include "FROM public.items WHERE items.sbid = 42"
+  end
 end

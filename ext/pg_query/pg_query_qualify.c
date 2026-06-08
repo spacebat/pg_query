@@ -182,6 +182,7 @@ static void qualify_node(Node *node, const char *schema, List *cte_names, const 
             qualify_node((Node *) stmt->whereClause, schema, stmt_cte_names, func_names, func_count);
             qualify_node((Node *) stmt->havingClause, schema, stmt_cte_names, func_names, func_count);
             qualify_list(stmt->groupClause, schema, stmt_cte_names, func_names, func_count);
+            qualify_list(stmt->distinctClause, schema, stmt_cte_names, func_names, func_count);
             qualify_list(stmt->sortClause, schema, stmt_cte_names, func_names, func_count);
             qualify_list(stmt->targetList, schema, stmt_cte_names, func_names, func_count);
             qualify_list(stmt->valuesLists, schema, stmt_cte_names, func_names, func_count);
@@ -897,6 +898,16 @@ static void filter_node(Node *node, List *cte_names, const FilterSpec *spec) {
             }
             // Recurse into subqueries in HAVING clause.
             filter_node((Node *) stmt->havingClause, stmt_cte_names, spec);
+            // Scope subqueries hiding in the remaining clauses. Each clause is
+            // handed to filter_node, whose default case lets
+            // raw_expression_tree_walker descend Lists / SortBy / expressions
+            // until it reaches any nested SubLink.
+            filter_node((Node *) stmt->groupClause, stmt_cte_names, spec);
+            filter_node((Node *) stmt->distinctClause, stmt_cte_names, spec);
+            filter_node((Node *) stmt->sortClause, stmt_cte_names, spec);
+            filter_node(stmt->limitCount, stmt_cte_names, spec);
+            filter_node(stmt->limitOffset, stmt_cte_names, spec);
+            filter_node((Node *) stmt->valuesLists, stmt_cte_names, spec);
             break;
         }
         case T_UpdateStmt: {
@@ -1015,6 +1026,8 @@ static void filter_node(Node *node, List *cte_names, const FilterSpec *spec) {
 
             // INSERT ... SELECT: scope the SELECT. INSERT ... VALUES: nothing.
             if (stmt->selectStmt) filter_node(stmt->selectStmt, stmt_cte_names, spec);
+            // Scope subqueries in ON CONFLICT DO UPDATE SET / WHERE.
+            filter_node((Node *) stmt->onConflictClause, stmt_cte_names, spec);
             break;
         }
         case T_SubLink: {
