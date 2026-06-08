@@ -11,6 +11,56 @@
 #include "miscadmin.h"
 
 
+typedef struct FilterSpec {
+    const char *column;            // e.g. "sbid"; NULL means "no filtering"
+    int value;                     // integer value, e.g. 42
+    const char **exclude;          // table names to skip (relname); may be NULL
+    int exclude_count;             // length of exclude
+} FilterSpec;
+
+// Match a table name against the exclusion list. Reuses the same
+// exact/prefix(%)-match convention as should_qualify_function.
+static bool table_is_excluded(const char *relname, const FilterSpec *spec) {
+    if (!relname || !spec || !spec->exclude || spec->exclude_count == 0) return false;
+    for (int i = 0; i < spec->exclude_count; i++) {
+        const char *pattern = spec->exclude[i];
+        int pattern_len = strlen(pattern);
+        if (pattern_len > 0 && pattern[pattern_len - 1] == '%') {
+            if (strncmp(relname, pattern, pattern_len - 1) == 0) return true;
+        } else {
+            if (strcmp(relname, pattern) == 0) return true;
+        }
+    }
+    return false;
+}
+
+// Build the AST for `ref_name.column = value` as an A_Expr.
+static Node *make_filter_predicate(const char *ref_name, const FilterSpec *spec) {
+    ColumnRef *cr = makeNode(ColumnRef);
+    cr->fields = list_make2(makeString(pstrdup(ref_name)),
+                            makeString(pstrdup(spec->column)));
+    cr->location = -1;
+
+    A_Const *konst = makeNode(A_Const);
+    konst->val.ival.type = T_Integer;
+    konst->val.ival.ival = spec->value;
+    konst->location = -1;
+
+    return (Node *) makeSimpleA_Expr(AEXPR_OP, "=", (Node *) cr, (Node *) konst, -1);
+}
+
+// AND `add` into `*existing` (creating/extending a BoolExpr as needed).
+static void and_into(Node **existing, Node *add) {
+    if (!add) return;
+    if (*existing == NULL) {
+        *existing = add;
+    } else if (IsA(*existing, BoolExpr) && ((BoolExpr *) *existing)->boolop == AND_EXPR) {
+        ((BoolExpr *) *existing)->args = lappend(((BoolExpr *) *existing)->args, add);
+    } else {
+        *existing = (Node *) makeBoolExpr(AND_EXPR, list_make2(*existing, add), -1);
+    }
+}
+
 
 static void qualify_rangevar(RangeVar *rv, const char *schema, List *cte_names) {
     // Safety check: ensure rv and rv->relname are not NULL
