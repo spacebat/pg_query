@@ -1310,3 +1310,143 @@ describe PgQuery, '#qualify_with_filter' do
     expect(query).to include "FROM public.items WHERE items.sbid = 42"
   end
 end
+
+describe PgQuery, '#qualify_with_filter (LZ tenant-isolation query shapes)' do
+  # Representative scoped (have sbid) and global (no sbid) tables from the LZ
+  # shared-schema tenant-isolation use case. Global tables are excluded via the
+  # filter_exclude denylist so they receive no sbid predicate.
+  let(:global_tables) { %w[users corporates schemas user_businesses global_businesses].freeze }
+
+  def inject_sbid(sql)
+    described_class.qualify_with_filter(
+      sql, "public",
+      filter_column: "sbid", filter_value: 42, filter_exclude: global_tables
+    )
+  end
+
+  it "injects sbid into a bare SELECT with no WHERE" do
+    expect(inject_sbid("SELECT * FROM shifts")).to eq \
+      "SELECT * FROM public.shifts WHERE shifts.sbid = 42"
+  end
+
+  it "ANDs sbid into an existing WHERE without weakening it" do
+    expect(inject_sbid("SELECT * FROM shifts WHERE start_date < '2026-01-01'")).to eq \
+      "SELECT * FROM public.shifts WHERE start_date < '2026-01-01' AND shifts.sbid = 42"
+  end
+
+  it "binds to the alias, not the table name, when aliased" do
+    expect(inject_sbid("SELECT * FROM shifts s")).to eq \
+      "SELECT * FROM public.shifts s WHERE s.sbid = 42"
+  end
+
+  it "leaves a global table untouched (schema-qualified, no sbid)" do
+    expect(inject_sbid("SELECT * FROM users")).to eq \
+      "SELECT * FROM public.users"
+  end
+
+  it "injects only the scoped side of a scoped-join-global query" do
+    expect(inject_sbid("SELECT * FROM employments e JOIN users u ON e.user_id = u.id")).to eq \
+      "SELECT * FROM public.employments e JOIN public.users u ON e.user_id = u.id WHERE e.sbid = 42"
+  end
+
+  it "constrains both sides of a scoped-join-scoped query" do
+    expect(inject_sbid("SELECT * FROM shifts s JOIN schedules sch ON s.schedule_id = sch.id")).to eq \
+      "SELECT * FROM public.shifts s JOIN public.schedules sch ON s.schedule_id = sch.id WHERE s.sbid = 42 AND sch.sbid = 42"
+  end
+
+  it "constrains both legs of a self-join with distinct aliases" do
+    expect(inject_sbid("SELECT * FROM shifts a JOIN shifts b ON a.id = b.replaced_by_id")).to eq \
+      "SELECT * FROM public.shifts a JOIN public.shifts b ON a.id = b.replaced_by_id WHERE a.sbid = 42 AND b.sbid = 42"
+  end
+
+  it "puts the nullable side of a LEFT JOIN in ON, preserving outer-join shape" do
+    expect(inject_sbid("SELECT * FROM schedules s LEFT JOIN shifts sh ON sh.schedule_id = s.id")).to eq \
+      "SELECT * FROM public.schedules s LEFT JOIN public.shifts sh ON sh.schedule_id = s.id AND sh.sbid = 42 WHERE s.sbid = 42"
+  end
+
+  it "constrains all scoped relations in a three-way mixed scoped/global join" do
+    expect(inject_sbid(
+      "SELECT * FROM shift_employments se JOIN employments e ON se.employment_id = e.id JOIN users u ON e.user_id = u.id"
+    )).to eq \
+      "SELECT * FROM public.shift_employments se JOIN public.employments e ON se.employment_id = e.id JOIN public.users u ON e.user_id = u.id WHERE se.sbid = 42 AND e.sbid = 42"
+  end
+
+  it "filters the CTE body at its definition; CTE reference in outer query is not a base table" do
+    expect(inject_sbid("WITH recent AS (SELECT * FROM shifts) SELECT * FROM recent")).to eq \
+      "WITH recent AS (SELECT * FROM public.shifts WHERE shifts.sbid = 42) SELECT * FROM recent"
+  end
+
+  it "does not treat a CTE name that shadows a scoped table as a base table" do
+    expect(inject_sbid("WITH shifts AS (SELECT 1 AS id) SELECT * FROM shifts")).to eq \
+      "WITH shifts AS (SELECT 1 AS id) SELECT * FROM shifts"
+  end
+
+  it "filters inside a subquery in the FROM clause; the derived-table wrapper is not a base table" do
+    expect(inject_sbid("SELECT * FROM (SELECT * FROM availabilities) x")).to eq \
+      "SELECT * FROM (SELECT * FROM public.availabilities WHERE availabilities.sbid = 42) x"
+  end
+
+  it "filters both the outer scoped table and the correlated EXISTS subquery scope" do
+    expect(inject_sbid(
+      "SELECT * FROM schedules s WHERE EXISTS (SELECT 1 FROM shifts sh WHERE sh.schedule_id = s.id)"
+    )).to eq \
+      "SELECT * FROM public.schedules s WHERE EXISTS (SELECT 1 FROM public.shifts sh WHERE sh.schedule_id = s.id AND sh.sbid = 42) AND s.sbid = 42"
+  end
+
+  it "filters both the outer scoped table and the IN subquery scope" do
+    expect(inject_sbid(
+      "SELECT * FROM employments WHERE id IN (SELECT employment_id FROM shift_employments)"
+    )).to eq \
+      "SELECT * FROM public.employments WHERE id IN (SELECT employment_id FROM public.shift_employments WHERE shift_employments.sbid = 42) AND employments.sbid = 42"
+  end
+
+  it "ANDs sbid into a DELETE WHERE (the delete-past-availabilities hazard)" do
+    expect(inject_sbid("DELETE FROM availabilities WHERE start_date < '2026-01-01'")).to eq \
+      "DELETE FROM public.availabilities WHERE start_date < '2026-01-01' AND availabilities.sbid = 42"
+  end
+
+  it "injects sbid into a DELETE with no WHERE so it cannot become an unconstrained truncate" do
+    expect(inject_sbid("DELETE FROM availabilities")).to eq \
+      "DELETE FROM public.availabilities WHERE availabilities.sbid = 42"
+  end
+
+  it "ANDs sbid into an UPDATE WHERE" do
+    expect(inject_sbid("UPDATE shifts SET published = true WHERE schedule_id = 'x'")).to eq \
+      "UPDATE public.shifts SET published = true WHERE schedule_id = 'x' AND shifts.sbid = 42"
+  end
+
+  it "constrains both target and from-table in UPDATE ... FROM" do
+    expect(inject_sbid(
+      "UPDATE shifts s SET published = true FROM schedules sch WHERE s.schedule_id = sch.id"
+    )).to eq \
+      "UPDATE public.shifts s SET published = true FROM public.schedules sch WHERE s.schedule_id = sch.id AND (s.sbid = 42 AND sch.sbid = 42)"
+  end
+
+  it "filters the SELECT side of an INSERT ... SELECT; INSERT ... VALUES is passed through" do
+    expect(inject_sbid(
+      "INSERT INTO audit_logs (sbid, body) SELECT sbid, body FROM notifications"
+    )).to eq \
+      "INSERT INTO public.audit_logs (sbid, body) SELECT sbid, body FROM public.notifications WHERE notifications.sbid = 42"
+  end
+
+  it "passes through INSERT ... VALUES without adding a WHERE (no read-relation to scope)" do
+    expect(inject_sbid("INSERT INTO shifts (sbid, start_date) VALUES (42, '2026-01-01')")).to eq \
+      "INSERT INTO public.shifts (sbid, start_date) VALUES (42, '2026-01-01')"
+  end
+
+  it "still constrains the unfiltered scoped relation in a partially-filtered query" do
+    # We always inject and do not check for existing predicates. The duplicate `s.sbid = 42`
+    # in the output is intentional: we rely on the caller's idempotency tag (not predicate
+    # de-duplication) to avoid double-processing. The security-relevant assertion is that
+    # `sch` DID get constrained despite `s` already appearing in the WHERE clause.
+    expect(inject_sbid(
+      "SELECT * FROM shifts s JOIN schedules sch ON s.schedule_id = sch.id WHERE s.sbid = 42"
+    )).to eq \
+      "SELECT * FROM public.shifts s JOIN public.schedules sch ON s.schedule_id = sch.id WHERE s.sbid = 42 AND (s.sbid = 42 AND sch.sbid = 42)"
+  end
+
+  it "filters both arms of a UNION (set-ops are supported, not an error)" do
+    expect(inject_sbid("SELECT id FROM shifts UNION SELECT id FROM schedules")).to eq \
+      "SELECT id FROM public.shifts WHERE shifts.sbid = 42 UNION SELECT id FROM public.schedules WHERE schedules.sbid = 42"
+  end
+end
