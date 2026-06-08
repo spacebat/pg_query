@@ -1089,3 +1089,12 @@ describe PgQuery, '#qualify' do
     end
   end
 end
+
+describe PgQuery, '#qualify_with_filter' do
+  it "injects the filter into a single-table SELECT with no WHERE" do
+    query = described_class.qualify_with_filter(
+      "SELECT * FROM users", "public", filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to eq "SELECT * FROM public.users WHERE users.sbid = 42"
+  end
+end
