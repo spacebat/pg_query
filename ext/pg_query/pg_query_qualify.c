@@ -74,14 +74,15 @@ static void qualify_rangevar(RangeVar *rv, const char *schema, List *cte_names) 
     // Safety check: ensure rv and rv->relname are not NULL
     if (!rv || !rv->relname) return;
 
-    // Check if this is a CTE name, if so, remove any schema qualification
-    if (cte_names) {
+    // A CTE reference is always unqualified; an explicit schema (e.g.
+    // public.users) means a real base table that merely shares a CTE's name,
+    // so only consult the CTE scope when rv->schemaname is NULL.
+    if (cte_names && !rv->schemaname) {
         ListCell *lc;
         foreach(lc, cte_names) {
             char *cte_name = (char *) lfirst(lc);
             if (strcmp(rv->relname, cte_name) == 0) {
-                rv->schemaname = NULL; // Remove any schema from CTE references
-                return;
+                return; // In-scope CTE reference: leave unqualified.
             }
         }
     }
@@ -792,8 +793,10 @@ static void filter_collect_tables(Node *node, bool nullable, Node **where_accum,
         case T_RangeVar: {
             RangeVar *rv = (RangeVar *) node;
             if (!rv->relname) return;
-            // A CTE reference parses as a RangeVar but is not a real table; skip it.
-            if (cte_names) {
+            // A CTE reference parses as a RangeVar but is not a real table; skip
+            // it. Only an unqualified RangeVar can be a CTE — an explicit schema
+            // (public.users) is a real base table that merely shares a CTE name.
+            if (cte_names && !rv->schemaname) {
                 ListCell *lc;
                 foreach(lc, cte_names) {
                     if (strcmp(rv->relname, (char *) lfirst(lc)) == 0) return;

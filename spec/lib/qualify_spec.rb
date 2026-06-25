@@ -572,9 +572,12 @@ describe PgQuery, '#qualify' do
       expect(query).to eq "SELECT * FROM public.\"users with spaces\""
     end
 
-    it "should handle schema-qualified CTE references" do
+    it "treats a schema-qualified name as a base table, not the same-named CTE" do
+      # public.my_cte is an explicitly qualified base table that merely shares
+      # the CTE's name; a CTE reference is always unqualified, so the schema
+      # must be preserved rather than stripped.
       query = described_class.qualify("WITH my_cte AS (SELECT * FROM users) SELECT * FROM public.my_cte", "public")
-      expect(query).to eq "WITH my_cte AS (SELECT * FROM public.users) SELECT * FROM my_cte"
+      expect(query).to eq "WITH my_cte AS (SELECT * FROM public.users) SELECT * FROM public.my_cte"
     end
 
     it "should handle temporary table qualifications" do
@@ -1308,6 +1311,42 @@ describe PgQuery, '#qualify_with_filter' do
       filter_column: "sbid", filter_value: 42
     )
     expect(query).to include "FROM public.items WHERE items.sbid = 42"
+  end
+end
+
+describe PgQuery, '#qualify (CTE shadowing guard)' do
+  it "does not strip an explicit schema from a table that shares a CTE's name" do
+    query = described_class.qualify(
+      "WITH users AS (SELECT 1) SELECT * FROM public.users", "tenant"
+    )
+    expect(query).to eq "WITH users AS (SELECT 1) SELECT * FROM public.users"
+  end
+
+  it "still treats an unqualified CTE reference as a CTE (no schema added)" do
+    query = described_class.qualify(
+      "WITH cte AS (SELECT 1) SELECT * FROM cte", "tenant"
+    )
+    expect(query).to eq "WITH cte AS (SELECT 1) SELECT * FROM cte"
+  end
+end
+
+describe PgQuery, '#qualify_with_filter (CTE shadowing guard)' do
+  it "filters a schema-qualified table that shares a CTE's name" do
+    query = described_class.qualify_with_filter(
+      "WITH users AS (SELECT 1) SELECT * FROM public.users", "tenant",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to eq(
+      "WITH users AS (SELECT 1) SELECT * FROM public.users WHERE users.sbid = 42"
+    )
+  end
+
+  it "does not filter an unqualified CTE reference that shadows a table name" do
+    query = described_class.qualify_with_filter(
+      "WITH users AS (SELECT 1) SELECT * FROM users", "tenant",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to eq "WITH users AS (SELECT 1) SELECT * FROM users"
   end
 end
 
