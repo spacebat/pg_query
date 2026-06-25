@@ -24,7 +24,40 @@ jobs:
       with:
         ruby-version: ${{ matrix.ruby }}
         bundler-cache: true
+    # Build the native extension from a clean checkout before testing, so a
+    # native build regression fails CI on its own (rake test also compiles,
+    # but an explicit step surfaces build failures distinctly).
+    - name: Compile extension
+      run: bundle exec rake compile
     - name: Tests
       run: bundle exec rake test
     - name: RuboCop
       run: bundle exec rake lint
+
+  # Memory-safety validation for the tenant-filter rewrite path (Task 09).
+  # The qualify/filter C code allocates and rewrites AST nodes, so a leak or
+  # invalid access is easy to introduce and hard to catch with correctness
+  # tests alone. Run the qualify spec under Valgrind. Ruby's own interpreter
+  # produces benign Valgrind noise, so we use the bundled suppression file and
+  # treat new *definite* leaks/errors in our code as the signal of interest.
+  memcheck:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.3'
+        bundler-cache: true
+    - name: Install Valgrind
+      run: sudo apt-get update && sudo apt-get install -y valgrind
+    - name: Compile extension
+      run: bundle exec rake compile
+    - name: Run qualify spec under Valgrind
+      run: |
+        valgrind \
+          --error-exitcode=1 \
+          --leak-check=full \
+          --errors-for-leak-kinds=definite \
+          --suppressions=.valgrind-ruby.supp \
+          --gen-suppressions=all \
+          bundle exec rspec spec/lib/qualify_spec.rb

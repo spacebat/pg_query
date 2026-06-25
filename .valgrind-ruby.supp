@@ -1,0 +1,56 @@
+# Valgrind suppressions for running the pg_query specs under Ruby (Task 09).
+#
+# The CRuby interpreter, its conservative GC, and dynamic loader trigger a large
+# amount of benign Valgrind noise (reachable allocations held for process
+# lifetime, mark-stack scans that look like uninitialised reads, dlopen
+# bookkeeping). These are not defects in pg_query's native code. The memcheck
+# CI job also passes --errors-for-leak-kinds=definite so only definite leaks
+# fail; these suppressions cover the non-leak interpreter noise.
+#
+# If a genuine pg_query leak/error is masked, narrow or remove the relevant
+# entry. Regenerate candidates with --gen-suppressions=all (already enabled in
+# the CI job, so suppression text is printed for any unsuppressed finding).
+
+{
+   ruby-interpreter-reachable-allocations
+   Memcheck:Leak
+   match-leak-kinds: reachable,possible,indirect
+   ...
+   obj:*/libruby*
+}
+
+{
+   ruby-gc-mark-conservative-scan
+   Memcheck:Cond
+   ...
+   obj:*/libruby*
+}
+
+{
+   ruby-gc-mark-conservative-value
+   Memcheck:Value8
+   ...
+   obj:*/libruby*
+}
+
+{
+   ruby-gc-mark-conservative-addr
+   Memcheck:Addr8
+   ...
+   obj:*/libruby*
+}
+
+{
+   dynamic-loader-noise
+   Memcheck:Leak
+   match-leak-kinds: reachable,possible
+   ...
+   obj:*/ld-*.so
+}
+
+{
+   dlopen-bookkeeping
+   Memcheck:Leak
+   match-leak-kinds: reachable,possible
+   fun:*dlopen*
+}

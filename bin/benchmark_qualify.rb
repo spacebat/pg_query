@@ -207,6 +207,11 @@ SQL
 # Sample function names for qualify_with_funcs testing
 FUNCTION_NAMES = ['now', 'count', 'sum', 'avg', 'max', 'min', 'string_agg'].freeze
 
+# Filter arguments for qualify_with_filter, so we can measure the cost the
+# tenant-filter pass adds on top of plain qualification.
+FILTER_COLUMN = 'sbid'.freeze
+FILTER_VALUE = 42
+
 puts "pg_query Qualify Performance Benchmark"
 puts "=" * 50
 puts "Ruby version: #{RUBY_VERSION}"
@@ -228,6 +233,10 @@ puts "Warming up..."
   PgQuery.qualify(SMALL_WITH_QUALIFY, 'public')
   PgQuery.qualify(LARGE_NO_QUALIFY, 'public')
   PgQuery.qualify(LARGE_WITH_QUALIFY, 'public')
+  PgQuery.qualify_with_filter(SMALL_WITH_QUALIFY, 'public',
+                              filter_column: FILTER_COLUMN, filter_value: FILTER_VALUE)
+  PgQuery.qualify_with_filter(LARGE_WITH_QUALIFY, 'public',
+                              filter_column: FILTER_COLUMN, filter_value: FILTER_VALUE)
 end
 puts ""
 
@@ -265,11 +274,23 @@ Benchmark.ips do |x|
   x.report("Large/No-qualify/qualify_with_funcs") do
     PgQuery.qualify_with_funcs(LARGE_NO_QUALIFY, 'public', FUNCTION_NAMES)
   end
-  
+
   x.report("Large/With-qualify/qualify_with_funcs") do
     PgQuery.qualify_with_funcs(LARGE_WITH_QUALIFY, 'public', FUNCTION_NAMES)
   end
-  
+
+  # qualify_with_filter: the tenant-filter pass on top of qualification. Paired
+  # with the matching qualify reports above so the filter overhead is visible.
+  x.report("Small/With-qualify/qualify_with_filter") do
+    PgQuery.qualify_with_filter(SMALL_WITH_QUALIFY, 'public',
+                                filter_column: FILTER_COLUMN, filter_value: FILTER_VALUE)
+  end
+
+  x.report("Large/With-qualify/qualify_with_filter") do
+    PgQuery.qualify_with_filter(LARGE_WITH_QUALIFY, 'public',
+                                filter_column: FILTER_COLUMN, filter_value: FILTER_VALUE)
+  end
+
   x.compare!
 end
 
