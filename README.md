@@ -113,6 +113,30 @@ to the value, so a query cannot read or modify rows belonging to another value.
 Subqueries in a DML `RETURNING` clause are filtered too, since they are a real
 read path.
 
+For `INSERT ... VALUES`, there is no `WHERE` clause to constrain, so instead the
+tenant column and value are injected into the write payload: the column is
+appended to the target column list and the value to every `VALUES` tuple, so the
+inserted rows belong to the filtered value.
+
+```ruby
+PgQuery.qualify_with_filter(
+  "INSERT INTO shifts (start_date) VALUES ('2026-01-01'), ('2026-01-02')",
+  "public",
+  filter_column: "sbid",
+  filter_value: 42
+)
+=> "INSERT INTO public.shifts (start_date, sbid) " \
+   "VALUES ('2026-01-01', 42), ('2026-01-02', 42)"
+```
+
+If the tenant column is already listed, every tuple must carry exactly the
+filtered value or the call is refused (see `TenantFilterUnhandled` below). Insert
+shapes that cannot be rewritten safely without catalog metadata — an
+`INSERT ... VALUES` with no explicit column list, and `INSERT ... DEFAULT
+VALUES` — are also refused. (`INSERT ... SELECT` is unaffected: its `SELECT` is
+filtered on the read side as above.) An excluded table receives no tenant
+column.
+
 ```ruby
 PgQuery.qualify_with_filter(
   "SELECT * FROM users u LEFT JOIN orders o ON u.id = o.user_id",
@@ -183,9 +207,11 @@ unfiltered. The allowed roots are `SELECT`/`INSERT`/`UPDATE`/`DELETE` and the
 wrappers that only recurse into them (`CREATE TABLE AS`, `CREATE VIEW`,
 `EXPLAIN`); everything else (e.g. `MERGE`, `COPY (SELECT ...) TO`,
 `DECLARE ... CURSOR`) is refused, as is a multi-statement string in which any
-statement is unhandled. This is distinct from `nil` (a parse/deparse failure).
-Plain qualification (no filter) is unaffected and still qualifies any
-statement.
+statement is unhandled. The same refusal applies to an `INSERT` whose `VALUES`
+payload cannot be rewritten safely (no explicit column list, `DEFAULT VALUES`,
+or an explicit tenant column whose value conflicts with `filter_value`). This is
+distinct from `nil` (a parse/deparse failure). Plain qualification (no filter)
+is unaffected and still qualifies any statement.
 
 ### Parsing a normalized query
 

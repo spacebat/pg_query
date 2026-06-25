@@ -1181,7 +1181,7 @@ describe PgQuery, '#qualify_with_filter' do
     expect(query).to eq "WITH recent AS (SELECT * FROM public.orders WHERE orders.sbid = 42) SELECT * FROM recent"
   end
 
-  it "filters the SELECT of an INSERT ... SELECT but not INSERT ... VALUES" do
+  it "filters the SELECT of an INSERT ... SELECT, and injects sbid into INSERT ... VALUES" do
     insert_select = described_class.qualify_with_filter(
       "INSERT INTO audit (x) SELECT id FROM orders", "public",
       filter_column: "sbid", filter_value: 42
@@ -1192,7 +1192,7 @@ describe PgQuery, '#qualify_with_filter' do
       "INSERT INTO users (name) VALUES ('a')", "public",
       filter_column: "sbid", filter_value: 42
     )
-    expect(insert_values).to eq "INSERT INTO public.users (name) VALUES ('a')"
+    expect(insert_values).to eq "INSERT INTO public.users (name, sbid) VALUES ('a', 42)"
   end
 
   it "skips tables on the exclusion list (exact and % prefix)" do
@@ -1665,7 +1665,7 @@ describe PgQuery, '#qualify_with_filter (RETURNING subquery filtering)' do
 
   it "filters a subquery in INSERT ... RETURNING" do
     expect(inject("INSERT INTO users (x) VALUES (1) RETURNING (SELECT count(*) FROM items)")).to eq(
-      "INSERT INTO public.users (x) VALUES (1) " \
+      "INSERT INTO public.users (x, sbid) VALUES (1, 42) " \
       "RETURNING (SELECT count(*) FROM public.items WHERE items.sbid = 42)"
     )
   end
@@ -1740,5 +1740,67 @@ describe PgQuery, '#qualify_with_filter (invalid argument handling)' do
         filter_column: "sbid", filter_value: 42, filter_exclude: ["countries"]
       )
     ).to eq("SELECT * FROM public.users WHERE users.sbid = 42")
+  end
+end
+
+describe PgQuery, '#qualify_with_filter (INSERT ... VALUES tenant-column injection)' do
+  def inject(sql, **opts)
+    described_class.qualify_with_filter(
+      sql, "public", filter_column: "sbid", filter_value: 42, **opts
+    )
+  end
+
+  it "appends the tenant column and value to a single-row INSERT ... VALUES" do
+    expect(inject("INSERT INTO shifts (start_date) VALUES ('2026-01-01')")).to eq(
+      "INSERT INTO public.shifts (start_date, sbid) VALUES ('2026-01-01', 42)"
+    )
+  end
+
+  it "appends the tenant value to every tuple of a multi-row INSERT ... VALUES" do
+    expect(inject("INSERT INTO shifts (a, b) VALUES (1, 2), (3, 4)")).to eq(
+      "INSERT INTO public.shifts (a, b, sbid) VALUES (1, 2, 42), (3, 4, 42)"
+    )
+  end
+
+  it "preserves an explicit tenant column that already holds the correct value" do
+    expect(inject("INSERT INTO shifts (sbid, a) VALUES (42, 1)")).to eq(
+      "INSERT INTO public.shifts (sbid, a) VALUES (42, 1)"
+    )
+  end
+
+  it "refuses an explicit tenant column holding a conflicting value" do
+    expect do
+      inject("INSERT INTO shifts (sbid, a) VALUES (7, 1)")
+    end.to raise_error(PgQuery::TenantFilterUnhandled)
+  end
+
+  it "refuses INSERT ... DEFAULT VALUES (no tuple to scope)" do
+    expect do
+      inject("INSERT INTO shifts DEFAULT VALUES")
+    end.to raise_error(PgQuery::TenantFilterUnhandled)
+  end
+
+  it "refuses INSERT ... VALUES with no explicit column list" do
+    expect do
+      inject("INSERT INTO shifts VALUES (1, 2)")
+    end.to raise_error(PgQuery::TenantFilterUnhandled)
+  end
+
+  it "does not inject into an excluded table's INSERT ... VALUES" do
+    expect(inject("INSERT INTO countries (name) VALUES ('NZ')", filter_exclude: ["countries"])).to eq(
+      "INSERT INTO public.countries (name) VALUES ('NZ')"
+    )
+  end
+
+  it "leaves INSERT ... SELECT to read-side filtering (no payload injection)" do
+    expect(inject("INSERT INTO audit (x) SELECT id FROM orders")).to eq(
+      "INSERT INTO public.audit (x) SELECT id FROM public.orders WHERE orders.sbid = 42"
+    )
+  end
+
+  it "injects alongside a multi-row VALUES that also carries a correct explicit sbid" do
+    expect(inject("INSERT INTO shifts (sbid, a) VALUES (42, 1), (42, 2)")).to eq(
+      "INSERT INTO public.shifts (sbid, a) VALUES (42, 1), (42, 2)"
+    )
   end
 end

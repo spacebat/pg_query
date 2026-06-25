@@ -17,6 +17,14 @@
     `ON` clause) are rewritten by wrapping the nullable side in a filtered
     derived table (`LEFT JOIN (SELECT * FROM orders WHERE orders.sbid = 42) o
     USING (id)`), so the rewrite stays valid SQL and keeps the outer-join shape.
+  - `INSERT ... VALUES` is rewritten on the write side: the tenant column is
+    appended to the target column list and the tenant value to every `VALUES`
+    tuple, so inserted rows belong to the filtered value. An explicit tenant
+    column must carry the filtered value in every tuple, or the call is refused.
+    Insert shapes that cannot be rewritten safely without catalog metadata
+    (no explicit column list, `DEFAULT VALUES`) are also refused via
+    `PgQuery::TenantFilterUnhandled`. `INSERT ... SELECT` continues to be
+    filtered on the read side.
   - `filter_exclude` skips named tables (exact match, or `%`-suffix prefix
     match) that do not have the filter column.
   - Filter injection happens only when both `filter_column` and `filter_value`
