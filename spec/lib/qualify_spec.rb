@@ -1803,4 +1803,58 @@ describe PgQuery, '#qualify_with_filter (INSERT ... VALUES tenant-column injecti
       "INSERT INTO public.shifts (sbid, a) VALUES (42, 1), (42, 2)"
     )
   end
+
+  it "produces reparseable SQL for a multi-row INSERT ... VALUES rewrite" do
+    out = inject("INSERT INTO shifts (a, b) VALUES (1, 2), (3, 4)")
+    expect { described_class.parse(out) }.not_to raise_error
+  end
+end
+
+describe PgQuery, '#qualify_with_filter (LATERAL subquery filter traversal)' do
+  def inject(sql)
+    described_class.qualify_with_filter(
+      sql, "public", filter_column: "sbid", filter_value: 42
+    )
+  end
+
+  # A LATERAL subquery in FROM is a real read scope; the filter pass must
+  # descend into it, not just schema-qualify it. Reparse to confirm the
+  # rewritten shape stays valid SQL.
+
+  it "filters a comma-style LATERAL subquery in FROM" do
+    out = inject(
+      "SELECT * FROM users u, LATERAL (SELECT * FROM orders o WHERE o.user_id = u.id) x"
+    )
+    expect(out).to eq(
+      "SELECT * FROM public.users u, " \
+      "LATERAL (SELECT * FROM public.orders o WHERE o.user_id = u.id AND o.sbid = 42) x " \
+      "WHERE u.sbid = 42"
+    )
+    expect { described_class.parse(out) }.not_to raise_error
+  end
+
+  it "filters a JOIN LATERAL subquery" do
+    out = inject(
+      "SELECT * FROM users u JOIN LATERAL (SELECT * FROM orders o WHERE o.user_id = u.id) x ON true"
+    )
+    expect(out).to eq(
+      "SELECT * FROM public.users u " \
+      "JOIN LATERAL (SELECT * FROM public.orders o WHERE o.user_id = u.id AND o.sbid = 42) x ON true " \
+      "WHERE u.sbid = 42"
+    )
+    expect { described_class.parse(out) }.not_to raise_error
+  end
+end
+
+describe PgQuery, '#qualify_with_filter (multi-statement filtering)' do
+  it "filters every statement of an all-supported multi-statement string" do
+    out = described_class.qualify_with_filter(
+      "SELECT * FROM users; DELETE FROM orders", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(out).to eq(
+      "SELECT * FROM public.users WHERE users.sbid = 42; " \
+      "DELETE FROM public.orders WHERE orders.sbid = 42"
+    )
+  end
 end
