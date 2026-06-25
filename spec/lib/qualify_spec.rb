@@ -1697,3 +1697,48 @@ describe PgQuery, '#qualify_with_filter (RETURNING subquery filtering)' do
     )
   end
 end
+
+describe PgQuery, '#qualify_with_filter (invalid argument handling)' do
+  it "raises TypeError for a non-string element in func_names" do
+    expect do
+      described_class.qualify_with_filter(
+        "SELECT * FROM users", "public", func_names: ["ok", 123]
+      )
+    end.to raise_error(TypeError)
+  end
+
+  it "raises TypeError for a non-string filter_column" do
+    expect do
+      described_class.qualify_with_filter(
+        "SELECT * FROM users", "public", filter_column: 123, filter_value: 42
+      )
+    end.to raise_error(TypeError)
+  end
+
+  it "raises TypeError for a non-string element in filter_exclude" do
+    expect do
+      described_class.qualify_with_filter(
+        "SELECT * FROM users", "public",
+        filter_column: "sbid", filter_value: 42, filter_exclude: ["ok", 123]
+      )
+    end.to raise_error(TypeError)
+  end
+
+  it "raises for a filter_value that cannot convert to an integer" do
+    expect do
+      described_class.qualify_with_filter(
+        "SELECT * FROM users", "public",
+        filter_column: "sbid", filter_value: "not-an-int"
+      )
+    end.to raise_error(TypeError)
+  end
+
+  it "still qualifies normally once invalid inputs are corrected" do
+    expect(
+      described_class.qualify_with_filter(
+        "SELECT * FROM users", "public",
+        filter_column: "sbid", filter_value: 42, filter_exclude: ["countries"]
+      )
+    ).to eq("SELECT * FROM public.users WHERE users.sbid = 42")
+  end
+end

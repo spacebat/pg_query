@@ -31,6 +31,10 @@
     `EXPLAIN`); a multi-statement string is refused as a whole if any
     statement is unhandled. This refusal is distinct from `nil`, which still
     signals a parse/deparse failure.
+  - Invalid arguments (a non-string `filter_column` or `func_names`/
+    `filter_exclude` element, or a non-integer `filter_value`) raise the
+    appropriate Ruby exception without leaking the native string arrays the
+    binding allocates.
   - `PgQuery.qualify` and `PgQuery.qualify_with_funcs` are unchanged.
 
 ## 6.1.0     2025-04-02

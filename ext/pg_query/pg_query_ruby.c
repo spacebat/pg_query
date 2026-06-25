@@ -308,6 +308,19 @@ VALUE pg_query_ruby_qualify_with_funcs(VALUE self, VALUE sql_str, VALUE schema_s
 	return output;
 }
 
+// Raise TypeError if any element of array is not a String. Allocates nothing,
+// so it is safe to call before other native allocations (see
+// pg_query_ruby_qualify_full, which prevalidates every array argument up front
+// so a later TypeError cannot leak an already-malloc'd array).
+static void ruby_validate_string_array(VALUE array) {
+	int count = RARRAY_LEN(array);
+	for (int i = 0; i < count; i++) {
+		if (!RB_TYPE_P(rb_ary_entry(array, i), T_STRING)) {
+			rb_raise(rb_eTypeError, "Array element must be a string");
+		}
+	}
+}
+
 static const char** ruby_string_array_to_c(VALUE array, int *out_count) {
 	int count = RARRAY_LEN(array);
 	*out_count = count;
@@ -336,9 +349,6 @@ VALUE pg_query_ruby_qualify_full(VALUE self, VALUE sql_str, VALUE schema_str, VA
 	const char* sql = StringValueCStr(sql_str);
 	const char* schema = StringValueCStr(schema_str);
 
-	int func_count = 0;
-	const char** func_names = ruby_string_array_to_c(func_names_array, &func_count);
-
 	int exclude_count = 0;
 	const char** filter_exclude = NULL;
 	const char* column = NULL;
@@ -346,11 +356,28 @@ VALUE pg_query_ruby_qualify_full(VALUE self, VALUE sql_str, VALUE schema_str, VA
 	char* result = NULL;
 	VALUE output = Qnil;
 
+	// Validate and convert every Ruby argument that can raise BEFORE any
+	// malloc, so a TypeError/conversion failure never leaks a native array.
 	// filter_column is a String when filtering is requested, nil otherwise.
 	if (!NIL_P(filter_column)) {
 		Check_Type(filter_column, T_STRING);
 		column = StringValueCStr(filter_column);
 		value = NUM2INT(filter_value);
+	}
+
+	// Type-check both arrays (no allocation) so that a non-string element in
+	// either one raises here, before func_names is malloc'd below.
+	ruby_validate_string_array(func_names_array);
+	if (column) {
+		ruby_validate_string_array(filter_exclude_array);
+	}
+
+	// Allocation happens only after the last raising validation above. The two
+	// native arrays are freed unconditionally at the end of this function.
+	int func_count = 0;
+	const char** func_names = ruby_string_array_to_c(func_names_array, &func_count);
+
+	if (column) {
 		filter_exclude = ruby_string_array_to_c(filter_exclude_array, &exclude_count);
 	}
 
