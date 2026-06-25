@@ -104,6 +104,27 @@ static bool filter_walker_cb(Node *node, void *context);
 
 char* pg_query_qualify_sql(const char *sql, const char *schema);
 
+// Strict allowlist for filtering: a top-level statement is filterable only if
+// the filter pass fully models it. Statements such as MERGE, COPY (SELECT) TO,
+// and DECLARE CURSOR parse fine but are NOT scoped by filter_node, so they must
+// be refused rather than returned unfiltered. Wrappers that only recurse into
+// an allowed query (CTAS / VIEW / EXPLAIN) are allowed.
+static bool top_level_stmt_is_filterable(Node *node) {
+    if (!node) return false;
+    switch (nodeTag(node)) {
+        case T_SelectStmt:
+        case T_InsertStmt:
+        case T_UpdateStmt:
+        case T_DeleteStmt:
+        case T_CreateTableAsStmt:
+        case T_ViewStmt:
+        case T_ExplainStmt:
+            return true;
+        default:
+            return false;
+    }
+}
+
 // Helper function to check if a function name should be qualified
 static bool should_qualify_function(const char *func_name, const char **func_names, int func_count) {
     if (!func_names || func_count == 0) return false;
@@ -1069,13 +1090,15 @@ static bool filter_walker_cb(Node *node, void *context) {
     return false;
 }
 
-char* pg_query_qualify_sql_full(const char *sql, const char *schema, const char **func_names, int func_count, const char *filter_column, int filter_value, const char **filter_exclude, int filter_exclude_count) {
+char* pg_query_qualify_sql_full(const char *sql, const char *schema, const char **func_names, int func_count, const char *filter_column, int filter_value, const char **filter_exclude, int filter_exclude_count, int *out_unhandled) {
     PgQueryProtobufParseResult parse_result = {0};
     PgQueryDeparseResult deparse_result = {0};
     List *stmts;
     ListCell *lc;
     char *result = NULL;
     MemoryContext ctx;
+
+    if (out_unhandled) *out_unhandled = 0;
 
     // Safety check: ensure schema is not NULL
     if (!schema) return NULL;
@@ -1095,6 +1118,24 @@ char* pg_query_qualify_sql_full(const char *sql, const char *schema, const char 
         // Convert protobuf to AST nodes
         stmts = pg_query_protobuf_to_nodes(parse_result.parse_tree);
 
+        // Strict gate: when filtering is requested, refuse the whole call if any
+        // top-level statement is outside the allowlist. Short-circuit before any
+        // qualification/mutation so a refused call never produces deparsed SQL.
+        // Signal refusal via out_unhandled and skip straight past the deparse;
+        // we must not `return` from inside PG_TRY, so flag and fall through.
+        bool refused = false;
+        if (filter_column) {
+            foreach(lc, stmts) {
+                RawStmt *raw_stmt = castNode(RawStmt, lfirst(lc));
+                if (!top_level_stmt_is_filterable(raw_stmt->stmt)) {
+                    if (out_unhandled) *out_unhandled = 1;
+                    refused = true;
+                    break;
+                }
+            }
+        }
+
+      if (!refused) {
         // Qualify table references in each statement
         foreach(lc, stmts) {
             RawStmt *raw_stmt = castNode(RawStmt, lfirst(lc));
@@ -1131,6 +1172,7 @@ char* pg_query_qualify_sql_full(const char *sql, const char *schema, const char 
         if (qualified_protobuf.data) {
             free(qualified_protobuf.data);
         }
+      }
     }
     PG_CATCH();
     {
@@ -1145,7 +1187,7 @@ char* pg_query_qualify_sql_full(const char *sql, const char *schema, const char 
 }
 
 char* pg_query_qualify_sql_with_funcs(const char *sql, const char *schema, const char **func_names, int func_count) {
-    return pg_query_qualify_sql_full(sql, schema, func_names, func_count, NULL, 0, NULL, 0);
+    return pg_query_qualify_sql_full(sql, schema, func_names, func_count, NULL, 0, NULL, 0, NULL);
 }
 
 char* pg_query_qualify_sql(const char *sql, const char *schema) {

@@ -158,6 +158,17 @@ PgQuery.qualify_with_filter(
 All three methods return the rewritten SQL, or `nil` if the query fails to
 parse or deparse.
 
+When filtering is requested, `qualify_with_filter` fails closed on any
+top-level statement the filter pass cannot scope: it raises
+`PgQuery::TenantFilterUnhandled` rather than returning the statement
+unfiltered. The allowed roots are `SELECT`/`INSERT`/`UPDATE`/`DELETE` and the
+wrappers that only recurse into them (`CREATE TABLE AS`, `CREATE VIEW`,
+`EXPLAIN`); everything else (e.g. `MERGE`, `COPY (SELECT ...) TO`,
+`DECLARE ... CURSOR`) is refused, as is a multi-statement string in which any
+statement is unhandled. This is distinct from `nil` (a parse/deparse failure).
+Plain qualification (no filter) is unaffected and still qualifies any
+statement.
+
 ### Parsing a normalized query
 
 ```ruby

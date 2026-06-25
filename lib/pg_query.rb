@@ -1,5 +1,6 @@
 require 'pg_query/version'
 require 'pg_query/parse_error'
+require 'pg_query/tenant_filter_unhandled'
 
 require 'pg_query/pg_query_pb'
 require 'pg_query/node'

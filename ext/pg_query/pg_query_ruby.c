@@ -354,7 +354,8 @@ VALUE pg_query_ruby_qualify_full(VALUE self, VALUE sql_str, VALUE schema_str, VA
 		filter_exclude = ruby_string_array_to_c(filter_exclude_array, &exclude_count);
 	}
 
-	result = pg_query_qualify_sql_full(sql, schema, func_names, func_count, column, value, filter_exclude, exclude_count);
+	int unhandled = 0;
+	result = pg_query_qualify_sql_full(sql, schema, func_names, func_count, column, value, filter_exclude, exclude_count, &unhandled);
 
 	if (result) {
 		output = rb_str_new_cstr(result);
@@ -364,6 +365,17 @@ VALUE pg_query_ruby_qualify_full(VALUE self, VALUE sql_str, VALUE schema_str, VA
 
 	if (func_names) free(func_names);
 	if (filter_exclude) free(filter_exclude);
+
+	// Refusal (unhandled top-level statement) is distinct from a parse/deparse
+	// failure (result == NULL, unhandled == 0): raise so the tenant boundary
+	// fails closed instead of silently returning unfiltered SQL or nil.
+	if (!result && unhandled) {
+		VALUE cPgQuery = rb_const_get(rb_cObject, rb_intern("PgQuery"));
+		VALUE cUnhandled = rb_const_get_at(cPgQuery, rb_intern("TenantFilterUnhandled"));
+		rb_raise(cUnhandled,
+		         "qualify_with_filter refused an unsupported top-level statement; "
+		         "the filter pass cannot scope it, so it would not be tenant-filtered");
+	}
 
 	return output;
 }

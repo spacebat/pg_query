@@ -1311,6 +1311,65 @@ describe PgQuery, '#qualify_with_filter' do
   end
 end
 
+describe PgQuery, '#qualify_with_filter (strict unhandled-statement gate)' do
+  # When filtering is requested, a top-level statement the filter pass does not
+  # fully model must be refused (fail closed) rather than returned unfiltered.
+  let(:merge_sql) do
+    "MERGE INTO accounts a USING txns t ON a.id = t.aid " \
+      "WHEN MATCHED THEN UPDATE SET bal = 1"
+  end
+
+  it "refuses MERGE when filtering is requested" do
+    expect do
+      described_class.qualify_with_filter(
+        merge_sql, "public", filter_column: "sbid", filter_value: 42
+      )
+    end.to raise_error(PgQuery::TenantFilterUnhandled)
+  end
+
+  it "refuses COPY (SELECT ...) TO when filtering is requested" do
+    expect do
+      described_class.qualify_with_filter(
+        "COPY (SELECT * FROM users) TO STDOUT", "public",
+        filter_column: "sbid", filter_value: 42
+      )
+    end.to raise_error(PgQuery::TenantFilterUnhandled)
+  end
+
+  it "refuses DECLARE ... CURSOR FOR SELECT when filtering is requested" do
+    expect do
+      described_class.qualify_with_filter(
+        "DECLARE c CURSOR FOR SELECT * FROM users", "public",
+        filter_column: "sbid", filter_value: 42
+      )
+    end.to raise_error(PgQuery::TenantFilterUnhandled)
+  end
+
+  it "refuses the whole call if any statement in a multi-statement string is unhandled" do
+    expect do
+      described_class.qualify_with_filter(
+        "SELECT * FROM users; #{merge_sql}", "public",
+        filter_column: "sbid", filter_value: 42
+      )
+    end.to raise_error(PgQuery::TenantFilterUnhandled)
+  end
+
+  it "still filters supported statements unchanged" do
+    query = described_class.qualify_with_filter(
+      "SELECT * FROM users", "public", filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to eq "SELECT * FROM public.users WHERE users.sbid = 42"
+  end
+
+  it "does not refuse unhandled statements when no filter is requested" do
+    # Plain qualification of an unhandled statement is not a tenant boundary,
+    # so it must keep working (Task 06 owns broader strict policy).
+    expect do
+      described_class.qualify_with_filter(merge_sql, "public")
+    end.not_to raise_error
+  end
+end
+
 describe PgQuery, '#qualify_with_filter (LZ tenant-isolation query shapes)' do
   # Representative scoped (have sbid) and global (no sbid) tables from the LZ
   # shared-schema tenant-isolation use case. Global tables are excluded via the

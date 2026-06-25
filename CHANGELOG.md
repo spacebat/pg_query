@@ -17,6 +17,15 @@
   - Filter injection happens only when both `filter_column` and `filter_value`
     are given; a `nil` `filter_value` (e.g. no current tenant) skips the filter
     walk and produces a plainly qualified query.
+  - When filtering is requested, the call fails closed on a top-level
+    statement the filter pass cannot scope (e.g. `MERGE`,
+    `COPY (SELECT ...) TO`, `DECLARE ... CURSOR`): it raises
+    `PgQuery::TenantFilterUnhandled` rather than returning the statement
+    unfiltered. Allowed roots are `SELECT`/`INSERT`/`UPDATE`/`DELETE` and the
+    wrappers that only recurse into them (`CREATE TABLE AS`, `CREATE VIEW`,
+    `EXPLAIN`); a multi-statement string is refused as a whole if any
+    statement is unhandled. This refusal is distinct from `nil`, which still
+    signals a parse/deparse failure.
   - `PgQuery.qualify` and `PgQuery.qualify_with_funcs` are unchanged.
 
 ## 6.1.0     2025-04-02
