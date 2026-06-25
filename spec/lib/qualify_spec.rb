@@ -1548,3 +1548,107 @@ describe PgQuery, '#qualify_with_filter (LZ tenant-isolation query shapes)' do
       "SELECT id FROM public.shifts WHERE shifts.sbid = 42 UNION SELECT id FROM public.schedules WHERE schedules.sbid = 42"
   end
 end
+
+describe PgQuery, '#qualify_with_filter (outer USING / NATURAL join rewrite)' do
+  def inject(sql)
+    described_class.qualify_with_filter(
+      sql, "public", filter_column: "sbid", filter_value: 42
+    )
+  end
+
+  # The nullable side of an outer USING/NATURAL join cannot take an injected
+  # predicate via the join's ON clause: Postgres forbids ON alongside
+  # USING/NATURAL. Instead the nullable side is wrapped in a filtered subquery
+  # so the outer-join shape is preserved and the result is valid SQL.
+
+  it "rewrites LEFT JOIN ... USING (...) without emitting invalid ON" do
+    out = inject("SELECT * FROM users u LEFT JOIN orders o USING (id)")
+    expect(out).to eq(
+      "SELECT * FROM public.users u " \
+      "LEFT JOIN (SELECT * FROM public.orders WHERE orders.sbid = 42) o USING (id) " \
+      "WHERE u.sbid = 42"
+    )
+    expect { described_class.parse(out) }.not_to raise_error
+  end
+
+  it "rewrites RIGHT JOIN ... USING (...) wrapping the nullable left side" do
+    out = inject("SELECT * FROM users u RIGHT JOIN orders o USING (id)")
+    expect(out).to eq(
+      "SELECT * FROM (SELECT * FROM public.users WHERE users.sbid = 42) u " \
+      "RIGHT JOIN public.orders o USING (id) " \
+      "WHERE o.sbid = 42"
+    )
+    expect { described_class.parse(out) }.not_to raise_error
+  end
+
+  it "rewrites FULL JOIN ... USING (...) wrapping both sides" do
+    out = inject("SELECT * FROM users u FULL JOIN orders o USING (id)")
+    expect(out).to eq(
+      "SELECT * FROM (SELECT * FROM public.users WHERE users.sbid = 42) u " \
+      "FULL JOIN (SELECT * FROM public.orders WHERE orders.sbid = 42) o USING (id)"
+    )
+    expect { described_class.parse(out) }.not_to raise_error
+  end
+
+  it "rewrites NATURAL LEFT JOIN without emitting invalid ON" do
+    out = inject("SELECT * FROM users u NATURAL LEFT JOIN orders o")
+    expect(out).to eq(
+      "SELECT * FROM public.users u " \
+      "NATURAL LEFT JOIN (SELECT * FROM public.orders WHERE orders.sbid = 42) o " \
+      "WHERE u.sbid = 42"
+    )
+    expect { described_class.parse(out) }.not_to raise_error
+  end
+
+  it "rewrites NATURAL RIGHT JOIN wrapping the nullable left side" do
+    out = inject("SELECT * FROM users u NATURAL RIGHT JOIN orders o")
+    expect(out).to eq(
+      "SELECT * FROM (SELECT * FROM public.users WHERE users.sbid = 42) u " \
+      "NATURAL RIGHT JOIN public.orders o " \
+      "WHERE o.sbid = 42"
+    )
+    expect { described_class.parse(out) }.not_to raise_error
+  end
+
+  it "rewrites NATURAL FULL JOIN wrapping both sides" do
+    out = inject("SELECT * FROM users u NATURAL FULL JOIN orders o")
+    expect(out).to eq(
+      "SELECT * FROM (SELECT * FROM public.users WHERE users.sbid = 42) u " \
+      "NATURAL FULL JOIN (SELECT * FROM public.orders WHERE orders.sbid = 42) o"
+    )
+    expect { described_class.parse(out) }.not_to raise_error
+  end
+
+  it "wraps an unaliased nullable side, synthesizing no spurious alias change" do
+    out = inject("SELECT * FROM users LEFT JOIN orders USING (id)")
+    expect(out).to eq(
+      "SELECT * FROM public.users " \
+      "LEFT JOIN (SELECT * FROM public.orders WHERE orders.sbid = 42) orders USING (id) " \
+      "WHERE users.sbid = 42"
+    )
+    expect { described_class.parse(out) }.not_to raise_error
+  end
+
+  it "leaves explicit-ON outer joins on the existing quals path" do
+    out = inject("SELECT * FROM users u LEFT JOIN orders o ON u.id = o.user_id")
+    expect(out).to eq(
+      "SELECT * FROM public.users u " \
+      "LEFT JOIN public.orders o ON u.id = o.user_id AND o.sbid = 42 " \
+      "WHERE u.sbid = 42"
+    )
+    expect { described_class.parse(out) }.not_to raise_error
+  end
+
+  it "still excludes denylisted tables from the wrapped subquery filter" do
+    out = described_class.qualify_with_filter(
+      "SELECT * FROM users u LEFT JOIN countries o USING (id)", "public",
+      filter_column: "sbid", filter_value: 42, filter_exclude: ["countries"]
+    )
+    expect(out).to eq(
+      "SELECT * FROM public.users u " \
+      "LEFT JOIN public.countries o USING (id) " \
+      "WHERE u.sbid = 42"
+    )
+    expect { described_class.parse(out) }.not_to raise_error
+  end
+end

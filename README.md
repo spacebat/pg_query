@@ -127,6 +127,22 @@ Note that the nullable side of an outer join (`orders` above) is filtered in the
 join's `ON` clause rather than in `WHERE`, which preserves the outer join's
 result shape instead of silently collapsing it to an inner join.
 
+Outer joins written with `USING (...)` or `NATURAL` cannot carry an `ON`
+clause, so the nullable side is instead wrapped in a filtered derived table,
+which preserves both the outer-join shape and the join-column visibility:
+
+```ruby
+PgQuery.qualify_with_filter(
+  "SELECT * FROM users u LEFT JOIN orders o USING (id)",
+  "public",
+  filter_column: "sbid",
+  filter_value: 42
+)
+=> "SELECT * FROM public.users u " \
+   "LEFT JOIN (SELECT * FROM public.orders WHERE orders.sbid = 42) o USING (id) " \
+   "WHERE u.sbid = 42"
+```
+
 Keyword arguments:
 
 * `filter_column:` / `filter_value:` — the predicate to inject (`column =

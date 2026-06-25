@@ -12,6 +12,10 @@
   - Outer-join result shape is preserved: the nullable side of a `LEFT`/
     `RIGHT`/`FULL` join is filtered in that join's `ON` clause rather than in
     `WHERE`, so an outer join is not silently collapsed to an inner join.
+  - Outer joins written with `USING (...)` or `NATURAL` (which cannot carry an
+    `ON` clause) are rewritten by wrapping the nullable side in a filtered
+    derived table (`LEFT JOIN (SELECT * FROM orders WHERE orders.sbid = 42) o
+    USING (id)`), so the rewrite stays valid SQL and keeps the outer-join shape.
   - `filter_exclude` skips named tables (exact match, or `%`-suffix prefix
     match) that do not have the filter column.
   - Filter injection happens only when both `filter_column` and `filter_value`

@@ -781,6 +781,70 @@ static void qualify_node(Node *node, const char *schema, List *cte_names, const 
     }
 }
 
+// Replace a nullable-side RangeVar with a filtered derived table, in place.
+//
+// The nullable side of an outer join that uses USING(...) or NATURAL cannot
+// take an injected predicate via the join's ON clause — Postgres forbids ON
+// alongside USING/NATURAL. Instead we rewrite
+//     LEFT JOIN orders o USING (id)
+// into
+//     LEFT JOIN (SELECT * FROM orders WHERE orders.sbid = 42) o USING (id)
+// which preserves the outer-join shape and the join column visibility (the
+// inner SELECT * re-exposes every column, so USING/NATURAL still resolve).
+//
+// *slot points at the JoinExpr's larg/rarg field. Only a plain, filterable
+// RangeVar is wrapped: CTE references and excluded tables are left untouched
+// (they need no predicate), and a side that is itself a join or subselect is
+// left for the normal recursion to handle. Returns true if it wrapped the slot
+// (predicate already placed — caller must not also recurse for a predicate),
+// false if the slot was left untouched and still needs normal handling.
+static bool wrap_nullable_with_filter(Node **slot, List *cte_names, const FilterSpec *spec) {
+    if (!slot || !*slot || !IsA(*slot, RangeVar)) return false;
+    RangeVar *rv = (RangeVar *) *slot;
+    if (!rv->relname) return false;
+
+    // An unqualified RangeVar matching an in-scope CTE name is not a real table.
+    if (cte_names && !rv->schemaname) {
+        ListCell *lc;
+        foreach(lc, cte_names) {
+            if (strcmp(rv->relname, (char *) lfirst(lc)) == 0) return false;
+        }
+    }
+    if (table_is_excluded(rv->relname, spec)) return false;
+
+    // The wrapped table is unaliased inside the subquery, so the predicate must
+    // reference its relname, not the outer alias (which moves to the subselect).
+    Node *pred = make_filter_predicate(rv->relname, spec);
+
+    // The outer alias moves onto the derived table; a subquery in FROM must have
+    // an alias, so an unaliased table reuses its relname as the alias.
+    Alias *outer_alias = rv->alias;
+    if (!outer_alias) {
+        outer_alias = makeNode(Alias);
+        outer_alias->aliasname = pstrdup(rv->relname);
+    }
+    rv->alias = NULL;
+
+    ColumnRef *star_ref = makeNode(ColumnRef);
+    star_ref->fields = list_make1(makeNode(A_Star));
+    star_ref->location = -1;
+    ResTarget *target = makeNode(ResTarget);
+    target->val = (Node *) star_ref;
+    target->location = -1;
+
+    SelectStmt *sel = makeNode(SelectStmt);
+    sel->targetList = list_make1(target);
+    sel->fromClause = list_make1(rv);
+    sel->whereClause = pred;
+
+    RangeSubselect *sub = makeNode(RangeSubselect);
+    sub->subquery = (Node *) sel;
+    sub->alias = outer_alias;
+
+    *slot = (Node *) sub;
+    return true;
+}
+
 // Walk a FROM/join subtree. Non-nullable tables' predicates go into
 // *where_accum; a table on the nullable side of an outer join gets its
 // predicate AND-ed into that join's ON (quals). Derived tables / function
@@ -830,16 +894,31 @@ static void filter_collect_tables(Node *node, bool nullable, Node **where_accum,
             // by collecting that side into a local accumulator and AND-ing the
             // result into j->quals.
             if (j->jointype == JOIN_LEFT || j->jointype == JOIN_RIGHT || j->jointype == JOIN_FULL) {
+                // USING(...)/NATURAL outer joins cannot carry an ON clause, so
+                // the nullable side's predicate cannot go into j->quals. Wrap
+                // each nullable RangeVar in a filtered derived table instead.
+                bool no_on_clause = (j->isNatural || j->usingClause != NIL);
+
+                // Nullable-side predicates that can't be wrapped accumulate here
+                // and are AND-ed into the join's ON in one shot (preserving the
+                // single-parenthesized shape for explicit-ON joins).
                 Node *on_accum = NULL;
                 // Left side
                 if (j->jointype == JOIN_RIGHT || j->jointype == JOIN_FULL) {
-                    filter_collect_tables(j->larg, left_nullable, &on_accum, cte_names, spec);
+                    // Nullable side. For USING/NATURAL, wrap it in a filtered
+                    // subquery; if wrapping wasn't applicable (CTE, excluded, or
+                    // a nested join/subselect), fall through to ON accumulation.
+                    if (!no_on_clause || !wrap_nullable_with_filter(&j->larg, cte_names, spec)) {
+                        filter_collect_tables(j->larg, left_nullable, &on_accum, cte_names, spec);
+                    }
                 } else {
                     filter_collect_tables(j->larg, left_nullable, where_accum, cte_names, spec);
                 }
                 // Right side
                 if (j->jointype == JOIN_LEFT || j->jointype == JOIN_FULL) {
-                    filter_collect_tables(j->rarg, right_nullable, &on_accum, cte_names, spec);
+                    if (!no_on_clause || !wrap_nullable_with_filter(&j->rarg, cte_names, spec)) {
+                        filter_collect_tables(j->rarg, right_nullable, &on_accum, cte_names, spec);
+                    }
                 } else {
                     filter_collect_tables(j->rarg, right_nullable, where_accum, cte_names, spec);
                 }
