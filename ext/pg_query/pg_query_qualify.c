@@ -1059,6 +1059,14 @@ static void filter_node(Node *node, List *cte_names, const FilterSpec *spec) {
                     filter_node(rt->val, stmt_cte_names, spec);
                 }
             }
+            // Recurse into subqueries in RETURNING (e.g. RETURNING (SELECT ...)).
+            {
+                ListCell *rl;
+                foreach(rl, stmt->returningList) {
+                    ResTarget *rt = (ResTarget *) lfirst(rl);
+                    filter_node(rt->val, stmt_cte_names, spec);
+                }
+            }
             break;
         }
         case T_DeleteStmt: {
@@ -1097,6 +1105,14 @@ static void filter_node(Node *node, List *cte_names, const FilterSpec *spec) {
             }
             and_into(&stmt->whereClause, where_accum);
             filter_node((Node *) stmt->whereClause, stmt_cte_names, spec);
+            // Recurse into subqueries in RETURNING (e.g. RETURNING (SELECT ...)).
+            {
+                ListCell *rl;
+                foreach(rl, stmt->returningList) {
+                    ResTarget *rt = (ResTarget *) lfirst(rl);
+                    filter_node(rt->val, stmt_cte_names, spec);
+                }
+            }
             break;
         }
         case T_InsertStmt: {
@@ -1131,6 +1147,14 @@ static void filter_node(Node *node, List *cte_names, const FilterSpec *spec) {
             if (stmt->selectStmt) filter_node(stmt->selectStmt, stmt_cte_names, spec);
             // Scope subqueries in ON CONFLICT DO UPDATE SET / WHERE.
             filter_node((Node *) stmt->onConflictClause, stmt_cte_names, spec);
+            // Recurse into subqueries in RETURNING (e.g. RETURNING (SELECT ...)).
+            {
+                ListCell *rl;
+                foreach(rl, stmt->returningList) {
+                    ResTarget *rt = (ResTarget *) lfirst(rl);
+                    filter_node(rt->val, stmt_cte_names, spec);
+                }
+            }
             break;
         }
         case T_SubLink: {

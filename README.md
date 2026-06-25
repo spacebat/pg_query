@@ -110,6 +110,8 @@ predicate (e.g. `sbid = 42`) into every part of the query that selects or
 affects rows. Each real table reference — at any nesting depth, in subqueries,
 CTE bodies, `JOIN ... ON`, `INSERT ... SELECT`, and expressions — is constrained
 to the value, so a query cannot read or modify rows belonging to another value.
+Subqueries in a DML `RETURNING` clause are filtered too, since they are a real
+read path.
 
 ```ruby
 PgQuery.qualify_with_filter(

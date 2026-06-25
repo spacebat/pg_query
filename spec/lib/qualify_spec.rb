@@ -1652,3 +1652,48 @@ describe PgQuery, '#qualify_with_filter (outer USING / NATURAL join rewrite)' do
     expect { described_class.parse(out) }.not_to raise_error
   end
 end
+
+describe PgQuery, '#qualify_with_filter (RETURNING subquery filtering)' do
+  def inject(sql)
+    described_class.qualify_with_filter(
+      sql, "public", filter_column: "sbid", filter_value: 42
+    )
+  end
+
+  # A subquery in a RETURNING clause is a real read path; it must be tenant
+  # filtered, not merely schema-qualified.
+
+  it "filters a subquery in INSERT ... RETURNING" do
+    expect(inject("INSERT INTO users (x) VALUES (1) RETURNING (SELECT count(*) FROM items)")).to eq(
+      "INSERT INTO public.users (x) VALUES (1) " \
+      "RETURNING (SELECT count(*) FROM public.items WHERE items.sbid = 42)"
+    )
+  end
+
+  it "filters a subquery in UPDATE ... RETURNING" do
+    expect(inject("UPDATE users SET x = 1 RETURNING (SELECT count(*) FROM items)")).to eq(
+      "UPDATE public.users SET x = 1 WHERE users.sbid = 42 " \
+      "RETURNING (SELECT count(*) FROM public.items WHERE items.sbid = 42)"
+    )
+  end
+
+  it "filters a subquery in DELETE ... RETURNING" do
+    expect(inject("DELETE FROM users RETURNING (SELECT count(*) FROM items)")).to eq(
+      "DELETE FROM public.users WHERE users.sbid = 42 " \
+      "RETURNING (SELECT count(*) FROM public.items WHERE items.sbid = 42)"
+    )
+  end
+
+  it "filters a subquery nested inside a RETURNING expression" do
+    expect(inject("UPDATE users SET x = 1 RETURNING coalesce((SELECT count(*) FROM items), 0)")).to eq(
+      "UPDATE public.users SET x = 1 WHERE users.sbid = 42 " \
+      "RETURNING COALESCE((SELECT count(*) FROM public.items WHERE items.sbid = 42), 0)"
+    )
+  end
+
+  it "leaves a RETURNING list without subqueries unchanged apart from qualification" do
+    expect(inject("UPDATE users SET x = 1 RETURNING id, x")).to eq(
+      "UPDATE public.users SET x = 1 WHERE users.sbid = 42 RETURNING id, x"
+    )
+  end
+end
