@@ -7,4 +7,7 @@ char* pg_query_qualify_sql_with_funcs(const char* sql, const char* schema, const
 // top-level statement is outside the strict allowlist, in which case the call
 // returns NULL without mutating/deparsing. Lets callers distinguish a refusal
 // from a parse/deparse failure (also NULL, but out_unhandled left 0).
-char* pg_query_qualify_sql_full(const char* sql, const char* schema, const char** func_names, int func_count, const char* filter_column, int filter_value, const char** filter_exclude, int filter_exclude_count, int* out_unhandled);
+// strict (0/1): when 1, refuse (as above) any statement or INSERT ... VALUES
+// shape the filter pass cannot scope. When 0, qualify those shapes without
+// refusing (they receive no row filter / tenant column) -- an explicit bypass.
+char* pg_query_qualify_sql_full(const char* sql, const char* schema, const char** func_names, int func_count, const char* filter_column, int filter_value, const char** filter_exclude, int filter_exclude_count, int* out_unhandled, int strict);

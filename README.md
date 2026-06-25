@@ -173,9 +173,16 @@ Keyword arguments:
 
 * `filter_column:` / `filter_value:` — the predicate to inject (`column =
   value`). `value` is an integer. Filtering happens only when **both** are
-  given; if either `filter_column` or `filter_value` is `nil` (the defaults),
-  filtering is skipped entirely and the call behaves exactly like
-  `PgQuery.qualify` (schema qualification only, no row restriction).
+  given. If `filter_column` is `nil` (the default) the call is plain
+  qualification. If a `filter_column` is given but `filter_value` is `nil`, the
+  behavior depends on `strict:` (below).
+* `strict:` — fail-closed control for tenant enforcement, **defaults to
+  `true`**. In strict mode, a `filter_column` with a `nil` `filter_value` raises
+  `PgQuery::NilTenant` (you asked to filter but gave no tenant), and any
+  statement or `INSERT ... VALUES` shape the filter pass cannot scope is refused
+  (see `TenantFilterUnhandled` below). With `strict: false` (an explicit
+  admin/bypass mode) a `nil` `filter_value` means qualify-only, and otherwise
+  refused statements/inserts are qualified without a filter instead of raising.
 * `filter_exclude:` — table names that must **not** receive the filter, for
   reference/lookup tables that lack the column. Matching is against the table's
   name: exact, or a `%`-suffix prefix match (e.g. `"lookup_%"`). A non-excluded
@@ -200,18 +207,21 @@ PgQuery.qualify_with_filter(
 All three methods return the rewritten SQL, or `nil` if the query fails to
 parse or deparse.
 
-When filtering is requested, `qualify_with_filter` fails closed on any
-top-level statement the filter pass cannot scope: it raises
+When filtering is requested in the default strict mode, `qualify_with_filter`
+fails closed on any top-level statement the filter pass cannot scope: it raises
 `PgQuery::TenantFilterUnhandled` rather than returning the statement
-unfiltered. The allowed roots are `SELECT`/`INSERT`/`UPDATE`/`DELETE` and the
+unfiltered. (A `nil` `filter_value` raises `PgQuery::NilTenant`, a subclass of
+`TenantFilterUnhandled`.) The allowed roots are
+`SELECT`/`INSERT`/`UPDATE`/`DELETE` and the
 wrappers that only recurse into them (`CREATE TABLE AS`, `CREATE VIEW`,
 `EXPLAIN`); everything else (e.g. `MERGE`, `COPY (SELECT ...) TO`,
 `DECLARE ... CURSOR`) is refused, as is a multi-statement string in which any
 statement is unhandled. The same refusal applies to an `INSERT` whose `VALUES`
 payload cannot be rewritten safely (no explicit column list, `DEFAULT VALUES`,
 or an explicit tenant column whose value conflicts with `filter_value`). This is
-distinct from `nil` (a parse/deparse failure). Plain qualification (no filter)
-is unaffected and still qualifies any statement.
+distinct from `nil` (a parse/deparse failure). Passing `strict: false` turns all
+of these refusals into plain qualification (no filter) instead of raising. Plain
+qualification (no filter) is unaffected and still qualifies any statement.
 
 ### Parsing a normalized query
 

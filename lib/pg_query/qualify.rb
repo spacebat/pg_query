@@ -14,27 +14,50 @@ module PgQuery
   #
   # Returns the rewritten SQL, or nil on parse/deparse failure.
   #
-  # When filtering is requested (filter_column and filter_value both present),
-  # the call fails closed on any top-level statement the filter pass cannot
-  # scope: it raises PgQuery::TenantFilterUnhandled rather than returning the
-  # statement unfiltered. Allowed roots are SELECT/INSERT/UPDATE/DELETE and the
-  # wrappers that only recurse into them (CREATE TABLE AS, CREATE VIEW, EXPLAIN);
-  # everything else (e.g. MERGE, COPY (SELECT ...) TO, DECLARE ... CURSOR) is
-  # refused. A multi-statement string is refused as a whole if any statement is
-  # unhandled. Plain qualification (no filter) is unaffected.
+  # strict: (default true) is the fail-closed control for shared-schema tenant
+  #   enforcement.
+  #   - strict: true (default): a filter_column with a nil filter_value raises
+  #     PgQuery::NilTenant (filtering requested with no tenant to scope to), and
+  #     any top-level statement or INSERT ... VALUES shape the filter pass cannot
+  #     scope is refused with PgQuery::TenantFilterUnhandled rather than returned
+  #     unfiltered. Allowed roots are SELECT/INSERT/UPDATE/DELETE and the
+  #     wrappers that only recurse into them (CREATE TABLE AS, CREATE VIEW,
+  #     EXPLAIN); everything else (e.g. MERGE, COPY (SELECT ...) TO,
+  #     DECLARE ... CURSOR) is refused, as is a multi-statement string in which
+  #     any statement is unhandled.
+  #   - strict: false: explicit admin/bypass mode. A nil filter_value means
+  #     qualify only (no row restriction), and statements/INSERT shapes that
+  #     would otherwise be refused are qualified without a filter instead.
+  #   NilTenant subclasses TenantFilterUnhandled, so rescuing the base class
+  #   catches both the nil-tenant and unsupported-statement cases.
+  #
+  # Plain qualification (PgQuery.qualify / qualify_with_funcs) is unaffected.
   def self.qualify_with_filter(sql, schema, filter_column: nil, filter_value: nil,
-                               filter_exclude: [], func_names: [])
-    # A nil filter_value means "no value to scope to" — skip the filter walk by
-    # passing a nil column, which the native layer treats as no filtering.
-    filter_column = nil if filter_value.nil?
+                               filter_exclude: [], func_names: [], strict: true)
+    # Nil-tenant policy. A nil filter_value means "no value to scope to".
+    #   strict (default): fail closed — requesting a filter with no tenant is an
+    #     error, so raise NilTenant rather than silently producing unscoped SQL.
+    #   strict: false: explicit bypass — skip the filter walk and qualify only.
+    if !filter_column.nil? && filter_value.nil?
+      if strict
+        raise NilTenant, 'qualify_with_filter was given a filter_column but a nil ' \
+                         'filter_value; pass strict: false to qualify without filtering'
+      end
 
+      filter_column = nil
+    end
+
+    # strict controls C-layer refusal of statements/INSERT shapes the filter
+    # pass cannot scope. strict: true refuses (TenantFilterUnhandled); strict:
+    # false qualifies them without refusing.
     qualify_full(
       sql,
       schema,
       func_names,
       filter_column,
       filter_value || 0,
-      filter_exclude
+      filter_exclude,
+      strict
     )
   end
 end

@@ -27,9 +27,13 @@
     filtered on the read side.
   - `filter_exclude` skips named tables (exact match, or `%`-suffix prefix
     match) that do not have the filter column.
-  - Filter injection happens only when both `filter_column` and `filter_value`
-    are given; a `nil` `filter_value` (e.g. no current tenant) skips the filter
-    walk and produces a plainly qualified query.
+  - `strict:` keyword (default `true`) is the fail-closed control for tenant
+    enforcement. In strict mode a `filter_column` with a `nil` `filter_value`
+    raises `PgQuery::NilTenant` (a subclass of `TenantFilterUnhandled`), and any
+    statement or `INSERT ... VALUES` shape that cannot be scoped is refused.
+    `strict: false` is an explicit admin/bypass mode: a `nil` `filter_value`
+    means qualify-only, and otherwise-refused statements/inserts are qualified
+    without a filter instead of raising.
   - When filtering is requested, the call fails closed on a top-level
     statement the filter pass cannot scope (e.g. `MERGE`,
     `COPY (SELECT ...) TO`, `DECLARE ... CURSOR`): it raises

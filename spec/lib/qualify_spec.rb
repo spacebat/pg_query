@@ -1224,9 +1224,17 @@ describe PgQuery, '#qualify_with_filter' do
     ).to eq "SELECT * FROM public.users"
   end
 
-  it "skips filter injection when filter_value is nil, even if filter_column is given" do
+  it "raises NilTenant when filter_value is nil in strict mode (the default)" do
+    expect do
+      described_class.qualify_with_filter(
+        "SELECT * FROM users", "public", filter_column: "sbid", filter_value: nil
+      )
+    end.to raise_error(PgQuery::NilTenant)
+  end
+
+  it "skips filter injection when filter_value is nil and strict: false" do
     query = described_class.qualify_with_filter(
-      "SELECT * FROM users", "public", filter_column: "sbid", filter_value: nil
+      "SELECT * FROM users", "public", filter_column: "sbid", filter_value: nil, strict: false
     )
     expect(query).to eq "SELECT * FROM public.users"
   end
@@ -1856,5 +1864,68 @@ describe PgQuery, '#qualify_with_filter (multi-statement filtering)' do
       "SELECT * FROM public.users WHERE users.sbid = 42; " \
       "DELETE FROM public.orders WHERE orders.sbid = 42"
     )
+  end
+end
+
+describe PgQuery, '#qualify_with_filter (strict: and nil-tenant policy)' do
+  let(:merge_sql) do
+    "MERGE INTO accounts a USING txns t ON a.id = t.aid " \
+      "WHEN MATCHED THEN UPDATE SET bal = 1"
+  end
+
+  it "exposes NilTenant as a subclass of TenantFilterUnhandled" do
+    expect(PgQuery::NilTenant.ancestors).to include(PgQuery::TenantFilterUnhandled)
+  end
+
+  it "raises NilTenant (a TenantFilterUnhandled) for a nil tenant in strict mode" do
+    expect do
+      described_class.qualify_with_filter(
+        "SELECT * FROM users", "public", filter_column: "sbid", filter_value: nil
+      )
+    end.to raise_error(PgQuery::TenantFilterUnhandled)
+  end
+
+  it "defaults to strict: true (refuses MERGE when filtering)" do
+    expect do
+      described_class.qualify_with_filter(
+        merge_sql, "public", filter_column: "sbid", filter_value: 42
+      )
+    end.to raise_error(PgQuery::TenantFilterUnhandled)
+  end
+
+  it "strict: false returns an otherwise-refused MERGE instead of raising" do
+    # MERGE is outside the filter pass's allowlist, so strict mode refuses it.
+    # strict: false relaxes the gate: the statement comes back like plain
+    # qualify (unfiltered, and MERGE's own tables are not in qualify's scope).
+    expect do
+      out = described_class.qualify_with_filter(
+        merge_sql, "public", filter_column: "sbid", filter_value: 42, strict: false
+      )
+      expect(out).to eq(described_class.qualify(merge_sql, "public"))
+    end.not_to raise_error
+  end
+
+  it "strict: false qualifies an unsafe INSERT ... VALUES instead of refusing" do
+    out = described_class.qualify_with_filter(
+      "INSERT INTO shifts VALUES (1, 2)", "public",
+      filter_column: "sbid", filter_value: 42, strict: false
+    )
+    expect(out).to eq("INSERT INTO public.shifts VALUES (1, 2)")
+  end
+
+  it "strict: false still filters supported statements when a tenant is present" do
+    out = described_class.qualify_with_filter(
+      "SELECT * FROM users", "public",
+      filter_column: "sbid", filter_value: 42, strict: false
+    )
+    expect(out).to eq("SELECT * FROM public.users WHERE users.sbid = 42")
+  end
+
+  it "strict: true (explicit) behaves like the default and refuses MERGE" do
+    expect do
+      described_class.qualify_with_filter(
+        merge_sql, "public", filter_column: "sbid", filter_value: 42, strict: true
+      )
+    end.to raise_error(PgQuery::TenantFilterUnhandled)
   end
 end

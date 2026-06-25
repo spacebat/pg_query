@@ -1305,7 +1305,7 @@ static bool filter_walker_cb(Node *node, void *context) {
     return false;
 }
 
-char* pg_query_qualify_sql_full(const char *sql, const char *schema, const char **func_names, int func_count, const char *filter_column, int filter_value, const char **filter_exclude, int filter_exclude_count, int *out_unhandled) {
+char* pg_query_qualify_sql_full(const char *sql, const char *schema, const char **func_names, int func_count, const char *filter_column, int filter_value, const char **filter_exclude, int filter_exclude_count, int *out_unhandled, int strict) {
     PgQueryProtobufParseResult parse_result = {0};
     PgQueryDeparseResult deparse_result = {0};
     List *stmts;
@@ -1333,13 +1333,15 @@ char* pg_query_qualify_sql_full(const char *sql, const char *schema, const char 
         // Convert protobuf to AST nodes
         stmts = pg_query_protobuf_to_nodes(parse_result.parse_tree);
 
-        // Strict gate: when filtering is requested, refuse the whole call if any
-        // top-level statement is outside the allowlist. Short-circuit before any
-        // qualification/mutation so a refused call never produces deparsed SQL.
-        // Signal refusal via out_unhandled and skip straight past the deparse;
-        // we must not `return` from inside PG_TRY, so flag and fall through.
+        // Strict gate: when filtering is requested AND strict, refuse the whole
+        // call if any top-level statement is outside the allowlist. Short-circuit
+        // before any qualification/mutation so a refused call never produces
+        // deparsed SQL. Signal refusal via out_unhandled and skip straight past
+        // the deparse; we must not `return` from inside PG_TRY, so flag and fall
+        // through. When !strict, skip the gate and qualify the statement as-is
+        // (it receives no filter), an explicit caller bypass.
         bool refused = false;
-        if (filter_column) {
+        if (filter_column && strict) {
             foreach(lc, stmts) {
                 RawStmt *raw_stmt = castNode(RawStmt, lfirst(lc));
                 if (!top_level_stmt_is_filterable(raw_stmt->stmt)) {
@@ -1358,6 +1360,9 @@ char* pg_query_qualify_sql_full(const char *sql, const char *schema, const char 
         }
 
         // Pass 2: inject row-restricting filter (only if a column was given).
+        // In non-strict mode, leave spec.refused NULL so an unsafe INSERT ...
+        // VALUES shape is qualified (and simply not injected into) rather than
+        // refused, matching the relaxed statement gate above.
         int write_refused = 0;
         if (filter_column) {
             FilterSpec spec = {
@@ -1365,7 +1370,7 @@ char* pg_query_qualify_sql_full(const char *sql, const char *schema, const char 
                 .value = filter_value,
                 .exclude = filter_exclude,
                 .exclude_count = filter_exclude_count,
-                .refused = &write_refused
+                .refused = strict ? &write_refused : NULL
             };
             foreach(lc, stmts) {
                 RawStmt *raw_stmt = castNode(RawStmt, lfirst(lc));
@@ -1413,7 +1418,9 @@ char* pg_query_qualify_sql_full(const char *sql, const char *schema, const char 
 }
 
 char* pg_query_qualify_sql_with_funcs(const char *sql, const char *schema, const char **func_names, int func_count) {
-    return pg_query_qualify_sql_full(sql, schema, func_names, func_count, NULL, 0, NULL, 0, NULL);
+    // No filter requested, so strict is moot; pass 1 (the gate only runs when
+    // a filter_column is present).
+    return pg_query_qualify_sql_full(sql, schema, func_names, func_count, NULL, 0, NULL, 0, NULL, 1);
 }
 
 char* pg_query_qualify_sql(const char *sql, const char *schema) {
