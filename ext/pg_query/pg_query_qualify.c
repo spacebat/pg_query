@@ -855,6 +855,40 @@ static bool wrap_nullable_with_filter(Node **slot, List *cte_names, const Filter
     return true;
 }
 
+// Wrap every filterable table on the nullable side of a USING/NATURAL outer
+// join in its own filtered derived table, descending through nested joins.
+//
+// wrap_nullable_with_filter handles the common case where that side is a single
+// RangeVar. But the side can itself be a join subtree (e.g.
+// `(a RIGHT JOIN b) FULL JOIN c USING (x)`), and a USING/NATURAL join still
+// cannot carry an ON clause — so a predicate for any table inside that subtree
+// has nowhere legal to go at this level. Wrapping each leaf RangeVar in place
+// keeps every predicate inside its own derived table, off the parent join's ON,
+// while preserving the outer-join shape and join-column visibility.
+//
+// Every table here is nullable with respect to the USING/NATURAL parent, so its
+// predicate belongs in its own wrapper regardless of inner join structure; we
+// therefore do NOT also feed inner joins' quals (that would double-filter and
+// re-introduce an ON predicate). Inner ON expressions are still walked for
+// nested subqueries.
+static void wrap_nullable_subtree(Node **slot, List *cte_names, const FilterSpec *spec) {
+    if (!slot || !*slot) return;
+    if (IsA(*slot, JoinExpr)) {
+        JoinExpr *j = (JoinExpr *) *slot;
+        wrap_nullable_subtree(&j->larg, cte_names, spec);
+        wrap_nullable_subtree(&j->rarg, cte_names, spec);
+        // Scope any subqueries in the inner ON, but inject no new predicate here.
+        filter_node(j->quals, cte_names, spec);
+    } else if (IsA(*slot, RangeSubselect)) {
+        // Derived table: scope its inner query; the wrapper itself takes none.
+        filter_node(((RangeSubselect *) *slot)->subquery, cte_names, spec);
+    } else {
+        // RangeVar (or anything else): wrap it if filterable; a non-wrappable
+        // RangeVar (CTE/excluded) correctly needs no predicate.
+        wrap_nullable_with_filter(slot, cte_names, spec);
+    }
+}
+
 // Walk a FROM/join subtree. Non-nullable tables' predicates go into
 // *where_accum; a table on the nullable side of an outer join gets its
 // predicate AND-ed into that join's ON (quals). Derived tables / function
@@ -915,10 +949,13 @@ static void filter_collect_tables(Node *node, bool nullable, Node **where_accum,
                 Node *on_accum = NULL;
                 // Left side
                 if (j->jointype == JOIN_RIGHT || j->jointype == JOIN_FULL) {
-                    // Nullable side. For USING/NATURAL, wrap it in a filtered
-                    // subquery; if wrapping wasn't applicable (CTE, excluded, or
-                    // a nested join/subselect), fall through to ON accumulation.
-                    if (!no_on_clause || !wrap_nullable_with_filter(&j->larg, cte_names, spec)) {
+                    // Nullable side. A USING/NATURAL join can carry no ON clause,
+                    // so wrap every table on this side in a filtered derived
+                    // table (descending through any nested joins) instead of
+                    // accumulating an ON predicate. Otherwise accumulate into ON.
+                    if (no_on_clause) {
+                        wrap_nullable_subtree(&j->larg, cte_names, spec);
+                    } else {
                         filter_collect_tables(j->larg, left_nullable, &on_accum, cte_names, spec);
                     }
                 } else {
@@ -926,7 +963,9 @@ static void filter_collect_tables(Node *node, bool nullable, Node **where_accum,
                 }
                 // Right side
                 if (j->jointype == JOIN_LEFT || j->jointype == JOIN_FULL) {
-                    if (!no_on_clause || !wrap_nullable_with_filter(&j->rarg, cte_names, spec)) {
+                    if (no_on_clause) {
+                        wrap_nullable_subtree(&j->rarg, cte_names, spec);
+                    } else {
                         filter_collect_tables(j->rarg, right_nullable, &on_accum, cte_names, spec);
                     }
                 } else {

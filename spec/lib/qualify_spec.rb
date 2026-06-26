@@ -1659,6 +1659,42 @@ describe PgQuery, '#qualify_with_filter (outer USING / NATURAL join rewrite)' do
     )
     expect { described_class.parse(out) }.not_to raise_error
   end
+
+  # Regression: when the nullable side of a USING/NATURAL outer join is itself a
+  # join subtree (not a single table), its tables' predicates still cannot land
+  # on the parent join's ON. Every table in the subtree must be wrapped, or the
+  # deparse emits an illegal ON alongside USING/NATURAL.
+
+  it "wraps every table when a USING join's nullable side is a join subtree" do
+    out = inject("SELECT * FROM a RIGHT JOIN b ON a.id = b.id FULL JOIN c USING (x)")
+    expect(out).to eq(
+      "SELECT * FROM (SELECT * FROM public.a WHERE a.sbid = 42) a " \
+      "RIGHT JOIN (SELECT * FROM public.b WHERE b.sbid = 42) b ON a.id = b.id " \
+      "FULL JOIN (SELECT * FROM public.c WHERE c.sbid = 42) c USING (x)"
+    )
+    expect { described_class.parse(out) }.not_to raise_error
+  end
+
+  it "wraps every table when a NATURAL join's nullable side is a join subtree" do
+    out = inject("SELECT * FROM (a JOIN b ON a.id = b.id) NATURAL FULL JOIN c")
+    expect(out).to eq(
+      "SELECT * FROM (SELECT * FROM public.a WHERE a.sbid = 42) a " \
+      "JOIN (SELECT * FROM public.b WHERE b.sbid = 42) b ON a.id = b.id " \
+      "NATURAL FULL JOIN (SELECT * FROM public.c WHERE c.sbid = 42) c"
+    )
+    expect { described_class.parse(out) }.not_to raise_error
+  end
+
+  it "keeps a pure explicit-ON join chain on the quals path (no over-wrapping)" do
+    out = inject("SELECT * FROM a LEFT JOIN b ON a.id = b.id LEFT JOIN c USING (x)")
+    expect(out).to eq(
+      "SELECT * FROM public.a " \
+      "LEFT JOIN public.b ON a.id = b.id AND b.sbid = 42 " \
+      "LEFT JOIN (SELECT * FROM public.c WHERE c.sbid = 42) c USING (x) " \
+      "WHERE a.sbid = 42"
+    )
+    expect { described_class.parse(out) }.not_to raise_error
+  end
 end
 
 describe PgQuery, '#qualify_with_filter (RETURNING subquery filtering)' do

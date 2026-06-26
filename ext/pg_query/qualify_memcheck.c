@@ -121,6 +121,10 @@ int main(void)
     expect_ok("natural right", "SELECT * FROM users u NATURAL RIGHT JOIN orders o", NULL);
     expect_ok("natural full",  "SELECT * FROM users u NATURAL FULL JOIN orders o", NULL);
     expect_ok("explicit on left", "SELECT * FROM users u LEFT JOIN orders o ON u.id = o.user_id", NULL);
+    // Nullable side of a USING/NATURAL join is itself a join subtree: every
+    // table must be wrapped (regression for the ON-alongside-USING bug).
+    expect_ok("using nullable join subtree", "SELECT * FROM a RIGHT JOIN b ON a.id = b.id FULL JOIN c USING (x)", NULL);
+    expect_ok("natural nullable join subtree", "SELECT * FROM (a JOIN b ON a.id = b.id) NATURAL FULL JOIN c", NULL);
 
     /* RETURNING subqueries (Task 04). */
     expect_ok("insert returning subq", "INSERT INTO users (x) VALUES (1) RETURNING (SELECT count(*) FROM items)", NULL);
