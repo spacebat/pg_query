@@ -229,7 +229,7 @@ FILTER_RETURNING = 'UPDATE users SET active = true RETURNING id, (SELECT count(*
 # INSERT ... VALUES: write-payload injection (append column + value per tuple).
 FILTER_INSERT_VALUES = "INSERT INTO shifts (employee_id, start_date, end_date) VALUES (1, '2026-01-01', '2026-01-02'), (2, '2026-01-03', '2026-01-04'), (3, '2026-01-05', '2026-01-06')".freeze
 
-# All filter fixtures, for warmup and reporting.
+# All single-path filter fixtures, for warmup and reporting.
 FILTER_FIXTURES = {
   'SimpleWhere' => FILTER_SIMPLE_WHERE,
   'UsingWrap' => FILTER_USING_WRAP,
@@ -237,6 +237,41 @@ FILTER_FIXTURES = {
   'Returning' => FILTER_RETURNING,
   'InsertValues' => FILTER_INSERT_VALUES
 }.freeze
+
+# Large (~1.3 KB) query that hits MANY transform sites in one statement: two CTE
+# bodies, several outer joins (including USING/NATURAL derived-table wrapping and
+# a nullable join-subtree), correlated subqueries, and IN-subqueries. This is the
+# filter analogue of LARGE_WITH_QUALIFY, so we can compare qualify vs
+# qualify_with_filter at scale when there is a lot to rewrite, not just one
+# transform on a tiny query.
+LARGE_FILTER_HEAVY = <<~SQL.strip
+  WITH active_emps AS (
+    SELECT e.employee_id, e.name, e.department_id, e.manager_id
+    FROM employees e
+    LEFT JOIN terminations t USING (employee_id)
+    WHERE t.employee_id IS NULL
+  ),
+  dept_rollup AS (
+    SELECT d.department_id, d.department_name,
+           (SELECT count(*) FROM projects p WHERE p.department_id = d.department_id) AS project_count,
+           (SELECT avg(s.amount) FROM salaries s WHERE s.department_id = d.department_id) AS avg_salary
+    FROM departments d
+    NATURAL LEFT JOIN budgets b
+    WHERE d.active = true
+  )
+  SELECT ae.name, dr.department_name, dr.project_count, dr.avg_salary, sched.shift_count,
+         coalesce((SELECT sum(h.hours) FROM hours h WHERE h.employee_id = ae.employee_id), 0) AS total_hours
+  FROM active_emps ae
+  JOIN dept_rollup dr ON ae.department_id = dr.department_id
+  LEFT JOIN managers m ON ae.manager_id = m.manager_id
+  RIGHT JOIN locations loc USING (location_id)
+  LEFT JOIN schedules sched ON ae.employee_id = sched.employee_id
+  FULL JOIN audit_log al USING (employee_id)
+  WHERE ae.employee_id IN (SELECT a.employee_id FROM assignments a WHERE a.active = true)
+    AND ae.department_id IN (SELECT pa.department_id FROM project_assignments pa WHERE pa.role = 'lead')
+  ORDER BY dr.avg_salary DESC
+  LIMIT 100
+SQL
 
 def qualify_filtered(sql)
   PgQuery.qualify_with_filter(sql, 'public', filter_column: FILTER_COLUMN, filter_value: FILTER_VALUE)
@@ -254,6 +289,7 @@ puts "Small no-qualify: #{SMALL_NO_QUALIFY.bytesize} bytes"
 puts "Small with-qualify: #{SMALL_WITH_QUALIFY.bytesize} bytes"
 puts "Large no-qualify: #{LARGE_NO_QUALIFY.bytesize} bytes"
 puts "Large with-qualify: #{LARGE_WITH_QUALIFY.bytesize} bytes"
+puts "Large filter-heavy: #{LARGE_FILTER_HEAVY.bytesize} bytes"
 puts ""
 
 # Warmup
@@ -268,6 +304,8 @@ puts "Warming up..."
   PgQuery.qualify_with_filter(LARGE_WITH_QUALIFY, 'public',
                               filter_column: FILTER_COLUMN, filter_value: FILTER_VALUE)
   FILTER_FIXTURES.each_value { |sql| qualify_filtered(sql) }
+  PgQuery.qualify(LARGE_FILTER_HEAVY, 'public')
+  qualify_filtered(LARGE_FILTER_HEAVY)
 end
 puts ""
 
@@ -331,6 +369,17 @@ Benchmark.ips do |x|
     end
   end
 
+  # Large, transform-heavy query: qualify vs qualify_with_filter at scale, so the
+  # filter overhead is measured when there is a lot to rewrite in one statement
+  # (parity with the Large/With-qualify pair above, which only hits simple WHERE).
+  x.report('LargeFilterHeavy/qualify') do
+    PgQuery.qualify(LARGE_FILTER_HEAVY, 'public')
+  end
+
+  x.report('LargeFilterHeavy/qualify_with_filter') do
+    qualify_filtered(LARGE_FILTER_HEAVY)
+  end
+
   x.compare!
 end
 
@@ -355,3 +404,7 @@ puts 'Filter rewrite-path results:'
 FILTER_FIXTURES.each do |name, sql|
   puts "  #{name}: #{qualify_filtered(sql)}"
 end
+puts ''
+
+puts 'Large filter-heavy result (first 300 chars):'
+puts qualify_filtered(LARGE_FILTER_HEAVY)[0..300] + '...'

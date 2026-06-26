@@ -29,6 +29,24 @@ and large (~3 KB recursive-CTE) fixtures. Captured on Linux x86_64, CRuby 3.4,
 The filter pass adds ~18 µs to the small query; on the large query it is lost in
 run-to-run variance (the parse/deparse of a 3 KB query dominates everything).
 
+The large fixtures above are filter-*light* (one simple WHERE on a big query).
+The `LargeFilterHeavy` fixture is the opposite — a ~1.2 KB query that triggers
+many transform sites in one statement (two CTE bodies, several outer joins
+including USING/NATURAL derived-table wrapping and a nullable join-subtree,
+correlated subqueries, IN-subqueries: ~13 predicate injections and 6 derived
+tables in the rewritten output):
+
+| Query | Method | Throughput (i/s) | Per call (µs) | vs `qualify` |
+|-------|--------|------------------|---------------|--------------|
+| LargeFilterHeavy | `qualify`             | 2,104 | 475.3 | — |
+| LargeFilterHeavy | `qualify_with_filter` | 1,671 | 598.5 | ~1.26× slower (+123 µs) |
+
+Even with a lot to rewrite in a single statement, the filter pass adds ~123 µs
+(~26%) over qualification — a modest, roughly linear overhead in the number of
+transform sites, with no pathological blow-up. (This query parses faster than
+the 3 KB recursive-CTE fixture above, so its absolute i/s is higher; the +123 µs
+delta is the figure of interest.)
+
 ## Cost by rewrite path
 
 Each fixture isolates one tenant-filter rewrite path. These are short queries, so
