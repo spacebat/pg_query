@@ -5,7 +5,11 @@ require 'mkmf'
 require 'open-uri'
 require 'pathname'
 
-$objs = Dir.glob(File.join(__dir__, '*.c')).map { |f| Pathname.new(f).sub_ext('.o').to_s }
+# qualify_memcheck.c is a standalone Valgrind/ASAN harness with its own main();
+# it is built separately (see bin/run_memcheck.sh), never linked into the .so.
+$objs = Dir.glob(File.join(__dir__, '*.c'))
+           .reject { |f| File.basename(f) == 'qualify_memcheck.c' }
+           .map { |f| Pathname.new(f).sub_ext('.o').to_s }
 
 if RUBY_PLATFORM !~ /cygwin|mswin|mingw|bccwin|wince|emx/
   $CFLAGS << " -fvisibility=hidden -O3 -Wall -fno-strict-aliasing -fwrapv -fstack-protector -Wno-unused-function -Wno-unused-variable -Wno-clobbered -Wno-sign-compare -Wno-discarded-qualifiers -Wno-unknown-warning-option -g"
