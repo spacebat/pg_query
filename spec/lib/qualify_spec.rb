@@ -393,119 +393,119 @@ describe PgQuery, '#qualify' do
   end
 
   describe "JOIN conditions" do
-    it "should qualify column references in JOIN conditions" do
+    it "qualifies column references in JOIN conditions" do
       query = described_class.qualify("SELECT * FROM users u JOIN orders o ON u.id = o.user_id WHERE u.active = true", "public")
       expect(query).to eq "SELECT * FROM public.users u JOIN public.orders o ON u.id = o.user_id WHERE u.active = true"
     end
   end
 
   describe "pending improvements - complex subquery contexts" do
-    it "should fully qualify tables in NOT EXISTS subqueries" do
+    it "fullies qualify tables in NOT EXISTS subqueries" do
       query = described_class.qualify("SELECT * FROM users u WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id)", "public")
       expect(query).to eq "SELECT * FROM public.users u WHERE NOT EXISTS (SELECT 1 FROM public.orders o WHERE o.user_id = u.id)"
     end
 
-    it "should fully qualify tables in ORDER BY subqueries" do
+    it "fullies qualify tables in ORDER BY subqueries" do
       query = described_class.qualify("SELECT * FROM users ORDER BY (SELECT COUNT(*) FROM orders WHERE user_id = users.id)", "public")
       expect(query).to eq "SELECT * FROM public.users ORDER BY (SELECT count(*) FROM public.orders WHERE user_id = users.id)"
     end
 
-    it "should fully qualify tables in LIMIT/OFFSET subqueries" do
+    it "fullies qualify tables in LIMIT/OFFSET subqueries" do
       query = described_class.qualify("SELECT * FROM users LIMIT (SELECT COUNT(*) FROM settings WHERE key = 'max_users')", "public")
       expect(query).to eq "SELECT * FROM public.users LIMIT (SELECT count(*) FROM public.settings WHERE key = 'max_users')"
     end
 
-    it "should fully qualify tables in INSERT VALUES subqueries" do
+    it "fullies qualify tables in INSERT VALUES subqueries" do
       query = described_class.qualify("INSERT INTO orders (user_id, product_id) VALUES ((SELECT id FROM users WHERE email = 'test@example.com'), 1)", "public")
       expect(query).to eq "INSERT INTO public.orders (user_id, product_id) VALUES ((SELECT id FROM public.users WHERE email = 'test@example.com'), 1)"
     end
 
-    it "should fully qualify tables in INSERT ON CONFLICT subqueries" do
+    it "fullies qualify tables in INSERT ON CONFLICT subqueries" do
       query = described_class.qualify("INSERT INTO users (name, email) VALUES ('John', 'john@example.com') ON CONFLICT (email) DO UPDATE SET name = (SELECT name FROM profiles WHERE user_id = users.id)", "public")
       expect(query).to eq "INSERT INTO public.users (name, email) VALUES ('John', 'john@example.com') ON CONFLICT (email) DO UPDATE SET name = (SELECT name FROM public.profiles WHERE user_id = users.id)"
     end
 
-    it "should fully qualify tables in RETURNING subqueries" do
+    it "fullies qualify tables in RETURNING subqueries" do
       query = described_class.qualify("INSERT INTO users (name) VALUES ('John') RETURNING id, (SELECT COUNT(*) FROM orders WHERE user_id = users.id)", "public")
       expect(query).to eq "INSERT INTO public.users (name) VALUES ('John') RETURNING id, (SELECT count(*) FROM public.orders WHERE user_id = users.id)"
     end
 
-    it "should fully qualify tables in UPDATE SET subqueries" do
+    it "fullies qualify tables in UPDATE SET subqueries" do
       query = described_class.qualify("UPDATE users SET order_count = (SELECT COUNT(*) FROM orders WHERE user_id = users.id)", "public")
       expect(query).to eq "UPDATE public.users SET order_count = (SELECT count(*) FROM public.orders WHERE user_id = users.id)"
     end
 
-    it "should fully qualify tables in DELETE WHERE EXISTS subqueries" do
+    it "fullies qualify tables in DELETE WHERE EXISTS subqueries" do
       query = described_class.qualify("DELETE FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE user_id = users.id AND status = 'cancelled')", "public")
       expect(query).to eq "DELETE FROM public.users WHERE EXISTS (SELECT 1 FROM public.orders WHERE user_id = users.id AND status = 'cancelled')"
     end
   end
 
   describe "pending improvements - advanced expression contexts" do
-    it "should fully qualify tables in function call subqueries" do
+    it "fullies qualify tables in function call subqueries" do
       query = described_class.qualify("SELECT COALESCE((SELECT name FROM users WHERE id = 1), 'Unknown') FROM profiles", "public")
       expect(query).to eq "SELECT COALESCE((SELECT name FROM public.users WHERE id = 1), 'Unknown') FROM public.profiles"
     end
 
-    it "should fully qualify tables in CASE expression subqueries" do
+    it "fullies qualify tables in CASE expression subqueries" do
       query = described_class.qualify("SELECT CASE WHEN (SELECT COUNT(*) FROM orders WHERE user_id = users.id) > 0 THEN 'Active' ELSE 'Inactive' END FROM users", "public")
       expect(query).to eq "SELECT CASE WHEN (SELECT count(*) FROM public.orders WHERE user_id = users.id) > 0 THEN 'Active' ELSE 'Inactive' END FROM public.users"
     end
 
-    it "should fully qualify tables in array subqueries" do
+    it "fullies qualify tables in array subqueries" do
       query = described_class.qualify("SELECT ARRAY(SELECT name FROM categories WHERE parent_id = products.category_id) FROM products", "public")
       expect(query).to eq "SELECT ARRAY(SELECT name FROM public.categories WHERE parent_id = products.category_id) FROM public.products"
     end
 
-    it "should fully qualify tables in aggregate function subqueries" do
+    it "fullies qualify tables in aggregate function subqueries" do
       query = described_class.qualify("SELECT COUNT((SELECT 1 FROM orders WHERE user_id = users.id)) FROM users", "public")
       expect(query).to eq "SELECT count((SELECT 1 FROM public.orders WHERE user_id = users.id)) FROM public.users"
     end
 
-    it "should fully qualify tables in window function subqueries" do
+    it "fullies qualify tables in window function subqueries" do
       query = described_class.qualify("SELECT ROW_NUMBER() OVER (ORDER BY (SELECT created_at FROM profiles WHERE user_id = users.id)) FROM users", "public")
       expect(query).to eq "SELECT row_number() OVER (ORDER BY (SELECT created_at FROM public.profiles WHERE user_id = users.id)) FROM public.users"
     end
 
-    it "should fully qualify tables in complex nested expressions" do
+    it "fullies qualify tables in complex nested expressions" do
       query = described_class.qualify("SELECT * FROM users WHERE id = ANY(SELECT user_id FROM orders WHERE product_id = ANY(SELECT id FROM products WHERE category_id = 1))", "public")
       expect(query).to eq "SELECT * FROM public.users WHERE id = ANY (SELECT user_id FROM public.orders WHERE product_id = ANY (SELECT id FROM public.products WHERE category_id = 1))"
     end
   end
 
   describe "pending improvements - advanced SQL features" do
-    it "should handle table-valued functions properly" do
+    it "handles table-valued functions properly" do
       query = described_class.qualify("SELECT * FROM users u, generate_series(1, (SELECT COUNT(*) FROM orders)) AS s", "public")
       expect(query).to eq "SELECT * FROM public.users u, generate_series(1, (SELECT count(*) FROM public.orders)) s"
     end
 
-    it "should handle lateral joins with subqueries" do
+    it "handles lateral joins with subqueries" do
       query = described_class.qualify("SELECT * FROM users u, LATERAL (SELECT * FROM orders WHERE user_id = u.id) o", "public")
       expect(query).to eq "SELECT * FROM public.users u, LATERAL (SELECT * FROM public.orders WHERE user_id = u.id) o"
     end
 
-    it "should handle VALUES clauses with subqueries" do
+    it "handles VALUES clauses with subqueries" do
       query = described_class.qualify("SELECT * FROM users WHERE id IN (VALUES ((SELECT 1)), ((SELECT 2 FROM orders WHERE id = 1)))", "public")
       expect(query).to eq "SELECT * FROM public.users WHERE id IN (VALUES ((SELECT 1)), ((SELECT 2 FROM public.orders WHERE id = 1)))"
     end
 
-    it "should handle stored procedure calls with table parameters" do
+    it "handles stored procedure calls with table parameters" do
       # pending "Stored procedure calls with table parameters should be qualified"
       query = described_class.qualify("SELECT * FROM my_function((SELECT * FROM users WHERE active = true))", "public")
       expect(query).to eq "SELECT * FROM my_function((SELECT * FROM public.users WHERE active = true))"
     end
 
-    it "should handle recursive CTE references in complex contexts" do
+    it "handles recursive CTE references in complex contexts" do
       query = described_class.qualify("WITH RECURSIVE tree AS (SELECT * FROM categories WHERE parent_id IS NULL UNION ALL SELECT c.* FROM categories c, tree WHERE c.parent_id = tree.id AND EXISTS (SELECT 1 FROM products WHERE category_id = c.id)) SELECT * FROM tree", "public")
       expect(query).to eq "WITH RECURSIVE tree AS (SELECT * FROM public.categories WHERE parent_id IS NULL UNION ALL SELECT c.* FROM public.categories c, tree WHERE c.parent_id = tree.id AND EXISTS (SELECT 1 FROM public.products WHERE category_id = c.id)) SELECT * FROM tree"
     end
 
-    it "should handle table expressions in FROM clauses" do
+    it "handles table expressions in FROM clauses" do
       query = described_class.qualify("SELECT * FROM (SELECT * FROM users WHERE active = true) u JOIN (SELECT * FROM orders WHERE status = 'pending') o ON u.id = o.user_id", "public")
       expect(query).to eq "SELECT * FROM (SELECT * FROM public.users WHERE active = true) u JOIN (SELECT * FROM public.orders WHERE status = 'pending') o ON u.id = o.user_id"
     end
 
-    it "should handle complex correlated subqueries" do
+    it "handles complex correlated subqueries" do
       query = described_class.qualify("SELECT * FROM users u WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id AND o.total > (SELECT AVG(total) FROM orders o2 WHERE o2.user_id = u.id))", "public")
       expect(query).to eq "SELECT * FROM public.users u WHERE EXISTS (SELECT 1 FROM public.orders o WHERE o.user_id = u.id AND o.total > (SELECT avg(total) FROM public.orders o2 WHERE o2.user_id = u.id))"
     end
@@ -562,12 +562,12 @@ describe PgQuery, '#qualify' do
   end
 
   describe "pending improvements - edge cases and error handling" do
-    it "should handle circular schema references gracefully" do
+    it "handles circular schema references gracefully" do
       query = described_class.qualify("SELECT * FROM public.users", "public")
       expect(query).to eq "SELECT * FROM public.users"
     end
 
-    it "should handle malformed table names gracefully" do
+    it "handles malformed table names gracefully" do
       query = described_class.qualify("SELECT * FROM \"users with spaces\"", "public")
       expect(query).to eq "SELECT * FROM public.\"users with spaces\""
     end
@@ -580,43 +580,43 @@ describe PgQuery, '#qualify' do
       expect(query).to eq "WITH my_cte AS (SELECT * FROM public.users) SELECT * FROM public.my_cte"
     end
 
-    it "should handle temporary table qualifications" do
+    it "handles temporary table qualifications" do
       query = described_class.qualify("SELECT * FROM temp_users", "public")
       expect(query).to eq "SELECT * FROM public.temp_users"
     end
 
-    it "should handle view qualifications consistently" do
+    it "handles view qualifications consistently" do
       query = described_class.qualify("SELECT * FROM user_view WHERE id IN (SELECT user_id FROM order_view)", "public")
       expect(query).to eq "SELECT * FROM public.user_view WHERE id IN (SELECT user_id FROM public.order_view)"
     end
 
-    it "should handle information_schema and pg_catalog tables" do
+    it "handles information_schema and pg_catalog tables" do
       query = described_class.qualify("SELECT * FROM information_schema.tables", "public")
       expect(query).to eq "SELECT * FROM information_schema.tables"
     end
 
-    it "should not qualify tables starting with pg_" do
+    it "does not qualify tables starting with pg_" do
       query = described_class.qualify("SELECT * FROM pg_class", "public")
       expect(query).to eq "SELECT * FROM pg_class"
     end
 
-    it "should not qualify pg_ tables in complex queries" do
+    it "does not qualify pg_ tables in complex queries" do
       query = described_class.qualify("SELECT u.*, t.typname FROM users u JOIN pg_type t ON u.type_oid = t.oid", "public")
       expect(query).to eq "SELECT u.*, t.typname FROM public.users u JOIN pg_type t ON u.type_oid = t.oid"
     end
 
-    it "should handle very long table names" do
+    it "handles very long table names" do
       long_table_name = "a" * 60
       query = described_class.qualify("SELECT * FROM #{long_table_name}", "public")
       expect(query).to eq "SELECT * FROM public.#{long_table_name}"
     end
 
-    it "should handle unicode table names" do
+    it "handles unicode table names" do
       query = described_class.qualify("SELECT * FROM ユーザー", "public")
       expect(query).to eq "SELECT * FROM public.\"ユーザー\""
     end
 
-    it "should only qualify unqualified tables when query has mixed qualified/unqualified tables" do
+    it "onlies qualify unqualified tables when query has mixed qualified/unqualified tables" do
       query = described_class.qualify("SELECT * FROM other_schema.qualified_table, unqualified_table", "public")
       expect(query).to eq "SELECT * FROM other_schema.qualified_table, public.unqualified_table"
     end
@@ -733,12 +733,12 @@ describe PgQuery, '#qualify' do
 
     it "handles complex DDL gracefully" do
       sql = <<~SQL.chomp
-          CREATE TABLE complex_table (
-            id SERIAL PRIMARY KEY,
-            data JSONB,
-            created_at TIMESTAMP DEFAULT NOW()
-          )
-        SQL
+        CREATE TABLE complex_table (
+          id SERIAL PRIMARY KEY,
+          data JSONB,
+          created_at TIMESTAMP DEFAULT NOW()
+        )
+      SQL
 
       query = described_class.qualify(sql, "public")
       expect(query).to include("complex_table")
@@ -1472,9 +1472,9 @@ describe PgQuery, '#qualify_with_filter (LZ tenant-isolation query shapes)' do
 
   it "constrains all scoped relations in a three-way mixed scoped/global join" do
     expect(inject_sbid(
-      "SELECT * FROM shift_employments se JOIN employments e ON se.employment_id = e.id JOIN users u ON e.user_id = u.id"
-    )).to eq \
-      "SELECT * FROM public.shift_employments se JOIN public.employments e ON se.employment_id = e.id JOIN public.users u ON e.user_id = u.id WHERE se.sbid = 42 AND e.sbid = 42"
+             "SELECT * FROM shift_employments se JOIN employments e ON se.employment_id = e.id JOIN users u ON e.user_id = u.id"
+           )).to eq \
+             "SELECT * FROM public.shift_employments se JOIN public.employments e ON se.employment_id = e.id JOIN public.users u ON e.user_id = u.id WHERE se.sbid = 42 AND e.sbid = 42"
   end
 
   it "filters the CTE body at its definition; CTE reference in outer query is not a base table" do
@@ -1494,16 +1494,16 @@ describe PgQuery, '#qualify_with_filter (LZ tenant-isolation query shapes)' do
 
   it "filters both the outer scoped table and the correlated EXISTS subquery scope" do
     expect(inject_sbid(
-      "SELECT * FROM schedules s WHERE EXISTS (SELECT 1 FROM shifts sh WHERE sh.schedule_id = s.id)"
-    )).to eq \
-      "SELECT * FROM public.schedules s WHERE EXISTS (SELECT 1 FROM public.shifts sh WHERE sh.schedule_id = s.id AND sh.sbid = 42) AND s.sbid = 42"
+             "SELECT * FROM schedules s WHERE EXISTS (SELECT 1 FROM shifts sh WHERE sh.schedule_id = s.id)"
+           )).to eq \
+             "SELECT * FROM public.schedules s WHERE EXISTS (SELECT 1 FROM public.shifts sh WHERE sh.schedule_id = s.id AND sh.sbid = 42) AND s.sbid = 42"
   end
 
   it "filters both the outer scoped table and the IN subquery scope" do
     expect(inject_sbid(
-      "SELECT * FROM employments WHERE id IN (SELECT employment_id FROM shift_employments)"
-    )).to eq \
-      "SELECT * FROM public.employments WHERE id IN (SELECT employment_id FROM public.shift_employments WHERE shift_employments.sbid = 42) AND employments.sbid = 42"
+             "SELECT * FROM employments WHERE id IN (SELECT employment_id FROM shift_employments)"
+           )).to eq \
+             "SELECT * FROM public.employments WHERE id IN (SELECT employment_id FROM public.shift_employments WHERE shift_employments.sbid = 42) AND employments.sbid = 42"
   end
 
   it "ANDs sbid into a DELETE WHERE (the delete-past-availabilities hazard)" do
@@ -1523,16 +1523,16 @@ describe PgQuery, '#qualify_with_filter (LZ tenant-isolation query shapes)' do
 
   it "constrains both target and from-table in UPDATE ... FROM" do
     expect(inject_sbid(
-      "UPDATE shifts s SET published = true FROM schedules sch WHERE s.schedule_id = sch.id"
-    )).to eq \
-      "UPDATE public.shifts s SET published = true FROM public.schedules sch WHERE s.schedule_id = sch.id AND (s.sbid = 42 AND sch.sbid = 42)"
+             "UPDATE shifts s SET published = true FROM schedules sch WHERE s.schedule_id = sch.id"
+           )).to eq \
+             "UPDATE public.shifts s SET published = true FROM public.schedules sch WHERE s.schedule_id = sch.id AND (s.sbid = 42 AND sch.sbid = 42)"
   end
 
   it "filters the SELECT side of an INSERT ... SELECT; INSERT ... VALUES is passed through" do
     expect(inject_sbid(
-      "INSERT INTO audit_logs (sbid, body) SELECT sbid, body FROM notifications"
-    )).to eq \
-      "INSERT INTO public.audit_logs (sbid, body) SELECT sbid, body FROM public.notifications WHERE notifications.sbid = 42"
+             "INSERT INTO audit_logs (sbid, body) SELECT sbid, body FROM notifications"
+           )).to eq \
+             "INSERT INTO public.audit_logs (sbid, body) SELECT sbid, body FROM public.notifications WHERE notifications.sbid = 42"
   end
 
   it "passes through INSERT ... VALUES without adding a WHERE (no read-relation to scope)" do
@@ -1546,9 +1546,9 @@ describe PgQuery, '#qualify_with_filter (LZ tenant-isolation query shapes)' do
     # de-duplication) to avoid double-processing. The security-relevant assertion is that
     # `sch` DID get constrained despite `s` already appearing in the WHERE clause.
     expect(inject_sbid(
-      "SELECT * FROM shifts s JOIN schedules sch ON s.schedule_id = sch.id WHERE s.sbid = 42"
-    )).to eq \
-      "SELECT * FROM public.shifts s JOIN public.schedules sch ON s.schedule_id = sch.id WHERE s.sbid = 42 AND (s.sbid = 42 AND sch.sbid = 42)"
+             "SELECT * FROM shifts s JOIN schedules sch ON s.schedule_id = sch.id WHERE s.sbid = 42"
+           )).to eq \
+             "SELECT * FROM public.shifts s JOIN public.schedules sch ON s.schedule_id = sch.id WHERE s.sbid = 42 AND (s.sbid = 42 AND sch.sbid = 42)"
   end
 
   it "filters both arms of a UNION (set-ops are supported, not an error)" do

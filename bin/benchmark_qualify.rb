@@ -7,8 +7,8 @@ require_relative '../lib/pg_query'
 # Small query (~300 bytes) - no qualification needed (already qualified)
 SMALL_NO_QUALIFY = <<~SQL.strip
   WITH user_stats AS (
-    SELECT user_id, COUNT(*) as order_count 
-    FROM public.orders 
+    SELECT user_id, COUNT(*) as order_count#{' '}
+    FROM public.orders#{' '}
     WHERE created_at > '2024-01-01'
     GROUP BY user_id
   )
@@ -22,8 +22,8 @@ SQL
 # Small query (~300 bytes) - needs qualification
 SMALL_WITH_QUALIFY = <<~SQL.strip
   WITH user_stats AS (
-    SELECT user_id, COUNT(*) as order_count 
-    FROM orders 
+    SELECT user_id, COUNT(*) as order_count#{' '}
+    FROM orders#{' '}
     WHERE created_at > '2024-01-01'
     GROUP BY user_id
   )
@@ -38,7 +38,7 @@ SQL
 LARGE_NO_QUALIFY = <<~SQL.strip
   WITH RECURSIVE organization_hierarchy AS (
     -- Base case: top-level managers
-    SELECT 
+    SELECT#{' '}
       emp.employee_id,
       emp.manager_id,
       emp.name,
@@ -49,11 +49,11 @@ LARGE_NO_QUALIFY = <<~SQL.strip
       ARRAY[emp.employee_id] as path
     FROM public.employees emp
     WHERE emp.manager_id IS NULL
-    
+  #{'  '}
     UNION ALL
-    
+  #{'  '}
     -- Recursive case: direct reports
-    SELECT 
+    SELECT#{' '}
       e.employee_id,
       e.manager_id,
       e.name,
@@ -67,7 +67,7 @@ LARGE_NO_QUALIFY = <<~SQL.strip
     WHERE e.employee_id != ALL(oh.path)  -- Prevent cycles
   ),
   department_stats AS (
-    SELECT 
+    SELECT#{' '}
       d.department_id,
       d.department_name,
       d.budget,
@@ -80,7 +80,7 @@ LARGE_NO_QUALIFY = <<~SQL.strip
     GROUP BY d.department_id, d.department_name, d.budget
   ),
   recent_projects AS (
-    SELECT 
+    SELECT#{' '}
       p.project_id,
       p.project_name,
       p.start_date,
@@ -95,7 +95,7 @@ LARGE_NO_QUALIFY = <<~SQL.strip
     WHERE p.start_date >= '2023-01-01'
     GROUP BY p.project_id, p.project_name, p.start_date, p.end_date, p.budget, p.department_id
   )
-  SELECT 
+  SELECT#{' '}
     ds.department_name,
     ds.employee_count,
     ds.avg_salary,
@@ -110,9 +110,9 @@ LARGE_NO_QUALIFY = <<~SQL.strip
   FROM department_stats ds
   LEFT JOIN recent_projects rp ON ds.department_id = rp.department_id
   WHERE ds.employee_count > 0
-  GROUP BY 
-    ds.department_id, ds.department_name, ds.employee_count, 
-    ds.avg_salary, ds.total_salary, ds.max_hierarchy_level, 
+  GROUP BY#{' '}
+    ds.department_id, ds.department_name, ds.employee_count,#{' '}
+    ds.avg_salary, ds.total_salary, ds.max_hierarchy_level,#{' '}
     ds.budget
   HAVING COUNT(rp.project_id) >= 1 OR ds.total_salary < ds.budget * 0.8
   ORDER BY ds.total_salary DESC, ds.employee_count DESC
@@ -123,7 +123,7 @@ SQL
 LARGE_WITH_QUALIFY = <<~SQL.strip
   WITH RECURSIVE organization_hierarchy AS (
     -- Base case: top-level managers
-    SELECT 
+    SELECT#{' '}
       emp.employee_id,
       emp.manager_id,
       emp.name,
@@ -134,11 +134,11 @@ LARGE_WITH_QUALIFY = <<~SQL.strip
       ARRAY[emp.employee_id] as path
     FROM employees emp
     WHERE emp.manager_id IS NULL
-    
+  #{'  '}
     UNION ALL
-    
+  #{'  '}
     -- Recursive case: direct reports
-    SELECT 
+    SELECT#{' '}
       e.employee_id,
       e.manager_id,
       e.name,
@@ -152,7 +152,7 @@ LARGE_WITH_QUALIFY = <<~SQL.strip
     WHERE e.employee_id != ALL(oh.path)  -- Prevent cycles
   ),
   department_stats AS (
-    SELECT 
+    SELECT#{' '}
       d.department_id,
       d.department_name,
       d.budget,
@@ -165,7 +165,7 @@ LARGE_WITH_QUALIFY = <<~SQL.strip
     GROUP BY d.department_id, d.department_name, d.budget
   ),
   recent_projects AS (
-    SELECT 
+    SELECT#{' '}
       p.project_id,
       p.project_name,
       p.start_date,
@@ -180,7 +180,7 @@ LARGE_WITH_QUALIFY = <<~SQL.strip
     WHERE p.start_date >= '2023-01-01'
     GROUP BY p.project_id, p.project_name, p.start_date, p.end_date, p.budget, p.department_id
   )
-  SELECT 
+  SELECT#{' '}
     ds.department_name,
     ds.employee_count,
     ds.avg_salary,
@@ -195,9 +195,9 @@ LARGE_WITH_QUALIFY = <<~SQL.strip
   FROM department_stats ds
   LEFT JOIN recent_projects rp ON ds.department_id = rp.department_id
   WHERE ds.employee_count > 0
-  GROUP BY 
-    ds.department_id, ds.department_name, ds.employee_count, 
-    ds.avg_salary, ds.total_salary, ds.max_hierarchy_level, 
+  GROUP BY#{' '}
+    ds.department_id, ds.department_name, ds.employee_count,#{' '}
+    ds.avg_salary, ds.total_salary, ds.max_hierarchy_level,#{' '}
     ds.budget
   HAVING COUNT(rp.project_id) >= 1 OR ds.total_salary < ds.budget * 0.8
   ORDER BY ds.total_salary DESC, ds.employee_count DESC
@@ -205,7 +205,7 @@ LARGE_WITH_QUALIFY = <<~SQL.strip
 SQL
 
 # Sample function names for qualify_with_funcs testing
-FUNCTION_NAMES = ['now', 'count', 'sum', 'avg', 'max', 'min', 'string_agg'].freeze
+FUNCTION_NAMES = %w[now count sum avg max min string_agg].freeze
 
 # Filter arguments for qualify_with_filter, so we can measure the cost the
 # tenant-filter pass adds on top of plain qualification.
@@ -277,23 +277,23 @@ def qualify_filtered(sql)
   PgQuery.qualify_with_filter(sql, 'public', filter_column: FILTER_COLUMN, filter_value: FILTER_VALUE)
 end
 
-puts "pg_query Qualify Performance Benchmark"
-puts "=" * 50
+puts 'pg_query Qualify Performance Benchmark'
+puts '=' * 50
 puts "Ruby version: #{RUBY_VERSION}"
 puts "pg_query version: #{PgQuery::VERSION}"
-puts ""
+puts ''
 
 # Display query sizes
-puts "Query sizes:"
+puts 'Query sizes:'
 puts "Small no-qualify: #{SMALL_NO_QUALIFY.bytesize} bytes"
 puts "Small with-qualify: #{SMALL_WITH_QUALIFY.bytesize} bytes"
 puts "Large no-qualify: #{LARGE_NO_QUALIFY.bytesize} bytes"
 puts "Large with-qualify: #{LARGE_WITH_QUALIFY.bytesize} bytes"
 puts "Large filter-heavy: #{LARGE_FILTER_HEAVY.bytesize} bytes"
-puts ""
+puts ''
 
 # Warmup
-puts "Warming up..."
+puts 'Warming up...'
 3.times do
   PgQuery.qualify(SMALL_NO_QUALIFY, 'public')
   PgQuery.qualify(SMALL_WITH_QUALIFY, 'public')
@@ -307,55 +307,55 @@ puts "Warming up..."
   PgQuery.qualify(LARGE_FILTER_HEAVY, 'public')
   qualify_filtered(LARGE_FILTER_HEAVY)
 end
-puts ""
+puts ''
 
 Benchmark.ips do |x|
   x.config(time: 10, warmup: 3)
-  
+
   # Small queries - qualify
-  x.report("Small/No-qualify/qualify") do
+  x.report('Small/No-qualify/qualify') do
     PgQuery.qualify(SMALL_NO_QUALIFY, 'public')
   end
-  
-  x.report("Small/With-qualify/qualify") do
+
+  x.report('Small/With-qualify/qualify') do
     PgQuery.qualify(SMALL_WITH_QUALIFY, 'public')
   end
-  
+
   # Small queries - qualify_with_funcs
-  x.report("Small/No-qualify/qualify_with_funcs") do
+  x.report('Small/No-qualify/qualify_with_funcs') do
     PgQuery.qualify_with_funcs(SMALL_NO_QUALIFY, 'public', FUNCTION_NAMES)
   end
-  
-  x.report("Small/With-qualify/qualify_with_funcs") do
+
+  x.report('Small/With-qualify/qualify_with_funcs') do
     PgQuery.qualify_with_funcs(SMALL_WITH_QUALIFY, 'public', FUNCTION_NAMES)
   end
-  
+
   # Large queries - qualify
-  x.report("Large/No-qualify/qualify") do
+  x.report('Large/No-qualify/qualify') do
     PgQuery.qualify(LARGE_NO_QUALIFY, 'public')
   end
-  
-  x.report("Large/With-qualify/qualify") do
+
+  x.report('Large/With-qualify/qualify') do
     PgQuery.qualify(LARGE_WITH_QUALIFY, 'public')
   end
-  
+
   # Large queries - qualify_with_funcs
-  x.report("Large/No-qualify/qualify_with_funcs") do
+  x.report('Large/No-qualify/qualify_with_funcs') do
     PgQuery.qualify_with_funcs(LARGE_NO_QUALIFY, 'public', FUNCTION_NAMES)
   end
 
-  x.report("Large/With-qualify/qualify_with_funcs") do
+  x.report('Large/With-qualify/qualify_with_funcs') do
     PgQuery.qualify_with_funcs(LARGE_WITH_QUALIFY, 'public', FUNCTION_NAMES)
   end
 
   # qualify_with_filter: the tenant-filter pass on top of qualification. Paired
   # with the matching qualify reports above so the filter overhead is visible.
-  x.report("Small/With-qualify/qualify_with_filter") do
+  x.report('Small/With-qualify/qualify_with_filter') do
     PgQuery.qualify_with_filter(SMALL_WITH_QUALIFY, 'public',
                                 filter_column: FILTER_COLUMN, filter_value: FILTER_VALUE)
   end
 
-  x.report("Large/With-qualify/qualify_with_filter") do
+  x.report('Large/With-qualify/qualify_with_filter') do
     PgQuery.qualify_with_filter(LARGE_WITH_QUALIFY, 'public',
                                 filter_column: FILTER_COLUMN, filter_value: FILTER_VALUE)
   end
@@ -383,21 +383,21 @@ Benchmark.ips do |x|
   x.compare!
 end
 
-puts ""
-puts "Benchmark complete!"
-puts ""
+puts ''
+puts 'Benchmark complete!'
+puts ''
 
 # Show sample outputs to verify correctness
-puts "Sample outputs (first 200 chars):"
-puts ""
-puts "Small with-qualify result:"
+puts 'Sample outputs (first 200 chars):'
+puts ''
+puts 'Small with-qualify result:'
 result = PgQuery.qualify(SMALL_WITH_QUALIFY, 'public')
-puts result[0..200] + "..."
-puts ""
+puts result[0..200] + '...'
+puts ''
 
-puts "Large with-qualify result:"
+puts 'Large with-qualify result:'
 result = PgQuery.qualify(LARGE_WITH_QUALIFY, 'public')
-puts result[0..200] + "..."
+puts result[0..200] + '...'
 puts ''
 
 puts 'Filter rewrite-path results:'
