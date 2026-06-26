@@ -17,8 +17,10 @@ typedef struct FilterSpec {
     int value;                     // integer value, e.g. 42
     const char **exclude;          // table names to skip (relname); may be NULL
     int exclude_count;             // length of exclude
-    int *refused;                  // set to 1 if an unsafe write shape is hit;
-                                   // caller fails closed. May be NULL.
+    bool refuse_unsafe;            // policy: refuse (true) vs tolerate (false) an
+                                   // unsafe write shape. False in non-strict mode.
+    bool *refused;                 // plumbing: set to true when an unsafe write
+                                   // shape is refused, so the caller fails closed.
 } FilterSpec;
 
 // Context bundle passed through raw_expression_tree_walker, which only
@@ -44,6 +46,16 @@ static bool table_is_excluded(const char *relname, const FilterSpec *spec) {
     return false;
 }
 
+// Build a bare integer A_Const node (e.g. `42`). Used both as the RHS of the
+// filter predicate and as the injected value in an INSERT ... VALUES tuple.
+static Node *make_int_const(int value) {
+    A_Const *konst = makeNode(A_Const);
+    konst->val.ival.type = T_Integer;
+    konst->val.ival.ival = value;
+    konst->location = -1;
+    return (Node *) konst;
+}
+
 // Build the AST for `ref_name.column = value` as an A_Expr.
 static Node *make_filter_predicate(const char *ref_name, const FilterSpec *spec) {
     ColumnRef *cr = makeNode(ColumnRef);
@@ -51,12 +63,8 @@ static Node *make_filter_predicate(const char *ref_name, const FilterSpec *spec)
                             makeString(pstrdup(spec->column)));
     cr->location = -1;
 
-    A_Const *konst = makeNode(A_Const);
-    konst->val.ival.type = T_Integer;
-    konst->val.ival.ival = spec->value;
-    konst->location = -1;
-
-    return (Node *) makeSimpleA_Expr(AEXPR_OP, "=", (Node *) cr, (Node *) konst, -1);
+    return (Node *) makeSimpleA_Expr(AEXPR_OP, "=", (Node *) cr,
+                                     make_int_const(spec->value), -1);
 }
 
 // AND `add` into `*existing` (creating/extending a BoolExpr as needed).
@@ -941,14 +949,11 @@ static void filter_collect_tables(Node *node, bool nullable, Node **where_accum,
     }
 }
 
-// Build a bare integer A_Const for the tenant value (e.g. `42`), for use as a
-// VALUES tuple element. Mirrors the const built in make_filter_predicate.
-static Node *make_tenant_value_const(const FilterSpec *spec) {
-    A_Const *konst = makeNode(A_Const);
-    konst->val.ival.type = T_Integer;
-    konst->val.ival.ival = spec->value;
-    konst->location = -1;
-    return (Node *) konst;
+// Mark an unsafe write shape. In strict mode (refuse_unsafe) this trips the
+// caller's refusal flag so it fails closed (skips deparse, signals unhandled);
+// in non-strict mode the shape is simply left un-injected (an explicit bypass).
+static void filter_refuse(const FilterSpec *spec) {
+    if (spec->refuse_unsafe && spec->refused) *spec->refused = true;
 }
 
 // Inject the tenant column/value into an INSERT ... VALUES payload so a write
@@ -978,14 +983,14 @@ static void inject_insert_values(InsertStmt *stmt, const FilterSpec *spec) {
     SelectStmt *sel = (SelectStmt *) stmt->selectStmt;
     // DEFAULT VALUES: selectStmt is NULL. Nothing to scope -> refuse.
     if (!sel || sel->valuesLists == NIL) {
-        if (spec->refused) *spec->refused = 1;
+        filter_refuse(spec);
         return;
     }
 
     // No explicit column list: we cannot position the tenant column without
     // catalog metadata -> refuse.
     if (stmt->cols == NIL) {
-        if (spec->refused) *spec->refused = 1;
+        filter_refuse(spec);
         return;
     }
 
@@ -1009,13 +1014,13 @@ static void inject_insert_values(InsertStmt *stmt, const FilterSpec *spec) {
             List *tuple = (List *) lfirst(lc);
             Node *elem = (Node *) list_nth(tuple, tenant_idx);
             if (!elem || !IsA(elem, A_Const)) {
-                if (spec->refused) *spec->refused = 1;
+                filter_refuse(spec);
                 return;
             }
             A_Const *konst = (A_Const *) elem;
             if (konst->isnull || konst->val.node.type != T_Integer ||
                 konst->val.ival.ival != spec->value) {
-                if (spec->refused) *spec->refused = 1;
+                filter_refuse(spec);
                 return;
             }
         }
@@ -1031,7 +1036,18 @@ static void inject_insert_values(InsertStmt *stmt, const FilterSpec *spec) {
 
     foreach(lc, sel->valuesLists) {
         List *tuple = (List *) lfirst(lc);
-        lfirst(lc) = lappend(tuple, make_tenant_value_const(spec));
+        lfirst(lc) = lappend(tuple, make_int_const(spec->value));
+    }
+}
+
+// Scope subqueries appearing in a DML RETURNING list (e.g.
+// RETURNING (SELECT ...)). Shared by the INSERT/UPDATE/DELETE branches, which
+// hold distinct stmt types but all expose a plain List * returningList.
+static void filter_returning_list(List *returningList, List *cte_names, const FilterSpec *spec) {
+    ListCell *rl;
+    foreach(rl, returningList) {
+        ResTarget *rt = (ResTarget *) lfirst(rl);
+        filter_node(rt->val, cte_names, spec);
     }
 }
 
@@ -1156,13 +1172,7 @@ static void filter_node(Node *node, List *cte_names, const FilterSpec *spec) {
                 }
             }
             // Recurse into subqueries in RETURNING (e.g. RETURNING (SELECT ...)).
-            {
-                ListCell *rl;
-                foreach(rl, stmt->returningList) {
-                    ResTarget *rt = (ResTarget *) lfirst(rl);
-                    filter_node(rt->val, stmt_cte_names, spec);
-                }
-            }
+            filter_returning_list(stmt->returningList, stmt_cte_names, spec);
             break;
         }
         case T_DeleteStmt: {
@@ -1202,13 +1212,7 @@ static void filter_node(Node *node, List *cte_names, const FilterSpec *spec) {
             and_into(&stmt->whereClause, where_accum);
             filter_node((Node *) stmt->whereClause, stmt_cte_names, spec);
             // Recurse into subqueries in RETURNING (e.g. RETURNING (SELECT ...)).
-            {
-                ListCell *rl;
-                foreach(rl, stmt->returningList) {
-                    ResTarget *rt = (ResTarget *) lfirst(rl);
-                    filter_node(rt->val, stmt_cte_names, spec);
-                }
-            }
+            filter_returning_list(stmt->returningList, stmt_cte_names, spec);
             break;
         }
         case T_InsertStmt: {
@@ -1239,31 +1243,23 @@ static void filter_node(Node *node, List *cte_names, const FilterSpec *spec) {
                 stmt_cte_names = local_cte_names;
             }
 
-            // INSERT ... SELECT: scope the SELECT (read path). INSERT ...
-            // VALUES: inject the tenant column/value into the write payload.
-            // A SelectStmt with valuesLists is a VALUES payload, not a real
-            // SELECT, so route it to inject_insert_values instead of recursing.
+            // INSERT ... SELECT: scope the SELECT (read path). Everything else
+            // (VALUES, DEFAULT VALUES) is a write payload routed to
+            // inject_insert_values, which injects the tenant column/value or
+            // refuses an unsafe shape. A SelectStmt carrying valuesLists is a
+            // VALUES payload, not a real SELECT.
             {
                 SelectStmt *insel = (SelectStmt *) stmt->selectStmt;
-                if (insel && insel->valuesLists != NIL) {
-                    inject_insert_values(stmt, spec);
-                } else if (stmt->selectStmt) {
+                if (insel && insel->valuesLists == NIL) {
                     filter_node(stmt->selectStmt, stmt_cte_names, spec);
                 } else {
-                    // DEFAULT VALUES (no selectStmt): no tuple to scope.
                     inject_insert_values(stmt, spec);
                 }
             }
             // Scope subqueries in ON CONFLICT DO UPDATE SET / WHERE.
             filter_node((Node *) stmt->onConflictClause, stmt_cte_names, spec);
             // Recurse into subqueries in RETURNING (e.g. RETURNING (SELECT ...)).
-            {
-                ListCell *rl;
-                foreach(rl, stmt->returningList) {
-                    ResTarget *rt = (ResTarget *) lfirst(rl);
-                    filter_node(rt->val, stmt_cte_names, spec);
-                }
-            }
+            filter_returning_list(stmt->returningList, stmt_cte_names, spec);
             break;
         }
         case T_SubLink: {
@@ -1334,18 +1330,16 @@ char* pg_query_qualify_sql_full(const char *sql, const char *schema, const char 
         stmts = pg_query_protobuf_to_nodes(parse_result.parse_tree);
 
         // Strict gate: when filtering is requested AND strict, refuse the whole
-        // call if any top-level statement is outside the allowlist. Short-circuit
-        // before any qualification/mutation so a refused call never produces
-        // deparsed SQL. Signal refusal via out_unhandled and skip straight past
-        // the deparse; we must not `return` from inside PG_TRY, so flag and fall
-        // through. When !strict, skip the gate and qualify the statement as-is
-        // (it receives no filter), an explicit caller bypass.
+        // call if any top-level statement is outside the allowlist. We must not
+        // `return` from inside PG_TRY, so set `refused` and fall through to the
+        // shared fail-closed branch below, which skips qualification, mutation,
+        // and deparse. When !strict, skip the gate and qualify the statement
+        // as-is (it receives no filter), an explicit caller bypass.
         bool refused = false;
         if (filter_column && strict) {
             foreach(lc, stmts) {
                 RawStmt *raw_stmt = castNode(RawStmt, lfirst(lc));
                 if (!top_level_stmt_is_filterable(raw_stmt->stmt)) {
-                    if (out_unhandled) *out_unhandled = 1;
                     refused = true;
                     break;
                 }
@@ -1360,32 +1354,32 @@ char* pg_query_qualify_sql_full(const char *sql, const char *schema, const char 
         }
 
         // Pass 2: inject row-restricting filter (only if a column was given).
-        // In non-strict mode, leave spec.refused NULL so an unsafe INSERT ...
-        // VALUES shape is qualified (and simply not injected into) rather than
-        // refused, matching the relaxed statement gate above.
-        int write_refused = 0;
+        // An unsafe write shape (e.g. INSERT ... VALUES with no column list,
+        // DEFAULT VALUES, or a conflicting explicit tenant value) trips `refused`
+        // in strict mode via the same flag as the statement gate; in non-strict
+        // mode (refuse_unsafe == false) it is left un-injected instead.
         if (filter_column) {
             FilterSpec spec = {
                 .column = filter_column,
                 .value = filter_value,
                 .exclude = filter_exclude,
                 .exclude_count = filter_exclude_count,
-                .refused = strict ? &write_refused : NULL
+                .refuse_unsafe = (strict != 0),
+                .refused = &refused
             };
             foreach(lc, stmts) {
                 RawStmt *raw_stmt = castNode(RawStmt, lfirst(lc));
                 filter_node(raw_stmt->stmt, NIL, &spec);
             }
         }
+      }
 
-        // An unsafe write payload (e.g. INSERT ... VALUES with no column list,
-        // DEFAULT VALUES, or a conflicting explicit tenant value) fails closed:
-        // signal refusal and skip deparse so no unscoped SQL is produced.
-        if (write_refused) {
-            if (out_unhandled) *out_unhandled = 1;
-            result = NULL;
-        } else {
-
+      // One fail-closed path for both the statement gate and an unsafe write
+      // shape: signal refusal and skip deparse so no unscoped SQL is produced.
+      if (refused) {
+        if (out_unhandled) *out_unhandled = 1;
+        result = NULL;
+      } else {
         // Convert back to protobuf
         PgQueryProtobuf qualified_protobuf = pg_query_nodes_to_protobuf(stmts);
 
@@ -1402,7 +1396,6 @@ char* pg_query_qualify_sql_full(const char *sql, const char *schema, const char 
         if (qualified_protobuf.data) {
             free(qualified_protobuf.data);
         }
-        } // end else (write payload not refused)
       }
     }
     PG_CATCH();
