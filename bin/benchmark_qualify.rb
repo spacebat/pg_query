@@ -212,6 +212,36 @@ FUNCTION_NAMES = ['now', 'count', 'sum', 'avg', 'max', 'min', 'string_agg'].free
 FILTER_COLUMN = 'sbid'.freeze
 FILTER_VALUE = 42
 
+# Filter-specific fixtures: each exercises a distinct tenant-filter rewrite path
+# so the benchmark reflects the real cost spread, not just the cheapest case.
+# The SMALL_/LARGE_WITH_QUALIFY queries above only hit simple WHERE-injection;
+# these hit the paths that build extra AST.
+#
+# Baseline: plain WHERE-clause predicate injection (cheapest path).
+FILTER_SIMPLE_WHERE = 'SELECT * FROM users u JOIN orders o ON u.id = o.user_id WHERE o.total > 100'.freeze
+# Outer USING join: the nullable side is rewritten into a filtered derived table
+# (SELECT * FROM orders WHERE ...) -- the most AST-heavy rewrite.
+FILTER_USING_WRAP = 'SELECT * FROM users u LEFT JOIN orders o USING (id)'.freeze
+# NATURAL outer join: same derived-table wrapping path.
+FILTER_NATURAL_WRAP = 'SELECT * FROM users u NATURAL LEFT JOIN orders o'.freeze
+# RETURNING subquery: filter pass must descend into the RETURNING expression.
+FILTER_RETURNING = 'UPDATE users SET active = true RETURNING id, (SELECT count(*) FROM orders WHERE orders.user_id = users.id)'.freeze
+# INSERT ... VALUES: write-payload injection (append column + value per tuple).
+FILTER_INSERT_VALUES = "INSERT INTO shifts (employee_id, start_date, end_date) VALUES (1, '2026-01-01', '2026-01-02'), (2, '2026-01-03', '2026-01-04'), (3, '2026-01-05', '2026-01-06')".freeze
+
+# All filter fixtures, for warmup and reporting.
+FILTER_FIXTURES = {
+  'SimpleWhere' => FILTER_SIMPLE_WHERE,
+  'UsingWrap' => FILTER_USING_WRAP,
+  'NaturalWrap' => FILTER_NATURAL_WRAP,
+  'Returning' => FILTER_RETURNING,
+  'InsertValues' => FILTER_INSERT_VALUES
+}.freeze
+
+def qualify_filtered(sql)
+  PgQuery.qualify_with_filter(sql, 'public', filter_column: FILTER_COLUMN, filter_value: FILTER_VALUE)
+end
+
 puts "pg_query Qualify Performance Benchmark"
 puts "=" * 50
 puts "Ruby version: #{RUBY_VERSION}"
@@ -237,6 +267,7 @@ puts "Warming up..."
                               filter_column: FILTER_COLUMN, filter_value: FILTER_VALUE)
   PgQuery.qualify_with_filter(LARGE_WITH_QUALIFY, 'public',
                               filter_column: FILTER_COLUMN, filter_value: FILTER_VALUE)
+  FILTER_FIXTURES.each_value { |sql| qualify_filtered(sql) }
 end
 puts ""
 
@@ -291,6 +322,15 @@ Benchmark.ips do |x|
                                 filter_column: FILTER_COLUMN, filter_value: FILTER_VALUE)
   end
 
+  # Per-rewrite-path filter fixtures, so the cost of the heavier rewrites
+  # (derived-table wrapping, RETURNING descent, write-payload injection) is
+  # visible rather than averaged into a single simple-WHERE number.
+  FILTER_FIXTURES.each do |name, sql|
+    x.report("Filter/#{name}/qualify_with_filter") do
+      qualify_filtered(sql)
+    end
+  end
+
   x.compare!
 end
 
@@ -309,3 +349,9 @@ puts ""
 puts "Large with-qualify result:"
 result = PgQuery.qualify(LARGE_WITH_QUALIFY, 'public')
 puts result[0..200] + "..."
+puts ''
+
+puts 'Filter rewrite-path results:'
+FILTER_FIXTURES.each do |name, sql|
+  puts "  #{name}: #{qualify_filtered(sql)}"
+end
