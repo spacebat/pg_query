@@ -135,8 +135,11 @@ int main(void)
     expect_ok("insert values single", "INSERT INTO shifts (a) VALUES (1)", "sbid");
     expect_ok("insert values multi",  "INSERT INTO shifts (a, b) VALUES (1, 2), (3, 4)", "sbid");
     expect_ok("insert values correct sbid", "INSERT INTO shifts (sbid, a) VALUES (42, 1)", NULL);
+    expect_ok("insert values param sbid", "INSERT INTO shifts (a, sbid) VALUES ($1, $2)", "42");
+    expect_ok("insert values multi param sbid", "INSERT INTO shifts (a, sbid) VALUES ($1, $2), ($3, $4)", "42");
     expect_ok("insert select",        "INSERT INTO audit (x) SELECT id FROM orders", "WHERE");
     expect_refused("insert values conflicting sbid", "INSERT INTO shifts (sbid, a) VALUES (7, 1)");
+    expect_refused("insert values short tuple", "INSERT INTO shifts (a, sbid) VALUES ($1)");
     expect_refused("insert values no cols", "INSERT INTO shifts VALUES (1, 2)");
     expect_refused("insert default values", "INSERT INTO shifts DEFAULT VALUES");
 

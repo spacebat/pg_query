@@ -129,9 +129,10 @@ PgQuery.qualify_with_filter(
    "VALUES ('2026-01-01', 42), ('2026-01-02', 42)"
 ```
 
-If the tenant column is already listed, every tuple must carry exactly the
-filtered value or the call is refused (see `TenantFilterUnhandled` below). Insert
-shapes that cannot be rewritten safely without catalog metadata — an
+If the tenant column is already listed, integer literals must carry exactly the
+filtered value, while bind params in that position are replaced with the filtered
+value. Other explicit values are refused (see `TenantFilterUnhandled` below).
+Insert shapes that cannot be rewritten safely without catalog metadata — an
 `INSERT ... VALUES` with no explicit column list, and `INSERT ... DEFAULT
 VALUES` — are also refused. (`INSERT ... SELECT` is unaffected: its `SELECT` is
 filtered on the read side as above.) An excluded table receives no tenant
@@ -182,7 +183,10 @@ Keyword arguments:
   statement or `INSERT ... VALUES` shape the filter pass cannot scope is refused
   (see `TenantFilterUnhandled` below). With `strict: false` (an explicit
   admin/bypass mode) a `nil` `filter_value` means qualify-only, and otherwise
-  refused statements/inserts are qualified without a filter instead of raising.
+  refused statements/inserts fall back to plain qualification semantics instead
+  of raising. That means they come back as `PgQuery.qualify(...)` would rewrite
+  them: unfiltered, and only to the extent plain qualification already supports
+  that statement shape.
 * `filter_exclude:` — table names that must **not** receive the filter, for
   reference/lookup tables that lack the column. Matching is against the table's
   name: exact, or a `%`-suffix prefix match (e.g. `"lookup_%"`). A non-excluded
@@ -220,8 +224,10 @@ statement is unhandled. The same refusal applies to an `INSERT` whose `VALUES`
 payload cannot be rewritten safely (no explicit column list, `DEFAULT VALUES`,
 or an explicit tenant column whose value conflicts with `filter_value`). This is
 distinct from `nil` (a parse/deparse failure). Passing `strict: false` turns all
-of these refusals into plain qualification (no filter) instead of raising. Plain
-qualification (no filter) is unaffected and still qualifies any statement.
+of these refusals into plain qualification semantics (no filter) instead of
+raising. Plain qualification is unaffected, but it does **not** currently
+rewrite every PostgreSQL statement family: for example, an unsupported `MERGE`
+comes back unchanged because `PgQuery.qualify` itself does not model `MERGE`.
 
 ### Parsing a normalized query
 

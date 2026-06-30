@@ -20,7 +20,8 @@
   - `INSERT ... VALUES` is rewritten on the write side: the tenant column is
     appended to the target column list and the tenant value to every `VALUES`
     tuple, so inserted rows belong to the filtered value. An explicit tenant
-    column must carry the filtered value in every tuple, or the call is refused.
+    integer literal must carry the filtered value in every tuple, and an
+    explicit tenant bind param is overwritten with the filtered value.
     Insert shapes that cannot be rewritten safely without catalog metadata
     (no explicit column list, `DEFAULT VALUES`) are also refused via
     `PgQuery::TenantFilterUnhandled`. `INSERT ... SELECT` continues to be

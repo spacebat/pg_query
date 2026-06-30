@@ -1812,9 +1812,40 @@ describe PgQuery, '#qualify_with_filter (INSERT ... VALUES tenant-column injecti
     )
   end
 
+  it "overrides an explicit tenant bind param with the filter value" do
+    expect(inject("INSERT INTO shifts (a, sbid) VALUES ($1, $2)")).to eq(
+      "INSERT INTO public.shifts (a, sbid) VALUES ($1, 42)"
+    )
+  end
+
+  it "overrides explicit tenant bind params in every tuple of a multi-row INSERT ... VALUES" do
+    expect(inject("INSERT INTO shifts (a, sbid) VALUES ($1, $2), ($3, $4)")).to eq(
+      "INSERT INTO public.shifts (a, sbid) VALUES ($1, 42), ($3, 42)"
+    )
+  end
+
+  it "overrides an explicit tenant bind param while preserving RETURNING filtering" do
+    expect(inject("INSERT INTO shifts (a, sbid) VALUES ($1, $2) RETURNING id, (SELECT count(*) FROM items)")).to eq(
+      "INSERT INTO public.shifts (a, sbid) VALUES ($1, 42) " \
+      "RETURNING id, (SELECT count(*) FROM public.items WHERE items.sbid = 42)"
+    )
+  end
+
+  it "overrides a casted tenant bind param with the filter value" do
+    expect(inject("INSERT INTO shifts (a, sbid) VALUES ($1, $2::integer)")).to eq(
+      "INSERT INTO public.shifts (a, sbid) VALUES ($1, 42)"
+    )
+  end
+
   it "refuses an explicit tenant column holding a conflicting value" do
     expect do
       inject("INSERT INTO shifts (sbid, a) VALUES (7, 1)")
+    end.to raise_error(PgQuery::TenantFilterUnhandled)
+  end
+
+  it "refuses a tuple with fewer values than the explicit column list" do
+    expect do
+      inject("INSERT INTO shifts (a, sbid) VALUES ($1)")
     end.to raise_error(PgQuery::TenantFilterUnhandled)
   end
 

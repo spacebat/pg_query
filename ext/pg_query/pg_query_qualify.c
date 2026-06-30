@@ -995,6 +995,16 @@ static void filter_refuse(const FilterSpec *spec) {
     if (spec->refuse_unsafe && spec->refused) *spec->refused = true;
 }
 
+static bool is_param_ref_expr(Node *node) {
+    if (!node) return false;
+    if (IsA(node, ParamRef)) return true;
+    if (IsA(node, TypeCast)) {
+        TypeCast *tc = (TypeCast *) node;
+        return is_param_ref_expr(tc->arg);
+    }
+    return false;
+}
+
 // Inject the tenant column/value into an INSERT ... VALUES payload so a write
 // cannot land rows under another tenant. Read-side scoping is handled
 // elsewhere; this is the write-payload counterpart and only runs when
@@ -1005,6 +1015,8 @@ static void filter_refuse(const FilterSpec *spec) {
 //       append the column to `cols` and the value to every tuple.
 //   - tenant column PRESENT with the correct integer value in every tuple:
 //       leave untouched.
+//   - tenant column PRESENT with a bind param in a tuple:
+//       replace the bind param with the tenant value.
 //   - tenant column PRESENT with a conflicting or non-integer value in any
 //       tuple: REFUSE (set spec->refused).
 //   - no explicit column list, or DEFAULT VALUES, or INSERT ... SELECT:
@@ -1047,15 +1059,29 @@ static void inject_insert_values(InsertStmt *stmt, const FilterSpec *spec) {
     }
 
     if (tenant_idx >= 0) {
-        // Tenant column already present: verify every tuple carries exactly the
-        // expected integer value; refuse on any mismatch or non-integer.
+        // Tenant column already present: integer literals must already match
+        // the filter value, while bind params are opaque app input and are
+        // forced to the connection's tenant. Anything else remains unsafe.
         foreach(lc, sel->valuesLists) {
             List *tuple = (List *) lfirst(lc);
-            Node *elem = (Node *) list_nth(tuple, tenant_idx);
+            if (list_length(tuple) <= tenant_idx) {
+                filter_refuse(spec);
+                return;
+            }
+
+            ListCell *elem_cell = list_nth_cell(tuple, tenant_idx);
+            Node *elem = (Node *) lfirst(elem_cell);
+            if (is_param_ref_expr(elem)) {
+                // Leaving the old $N unreferenced is fine; PostgreSQL accepts
+                // extra supplied bind values, so no param renumbering is needed.
+                lfirst(elem_cell) = make_int_const(spec->value);
+                continue;
+            }
             if (!elem || !IsA(elem, A_Const)) {
                 filter_refuse(spec);
                 return;
             }
+
             A_Const *konst = (A_Const *) elem;
             if (konst->isnull || konst->val.node.type != T_Integer ||
                 konst->val.ival.ival != spec->value) {
@@ -1063,7 +1089,7 @@ static void inject_insert_values(InsertStmt *stmt, const FilterSpec *spec) {
                 return;
             }
         }
-        return; // present and correct in every tuple: leave untouched.
+        return; // present and safe in every tuple.
     }
 
     // Tenant column absent: append it to the column list and append the value
