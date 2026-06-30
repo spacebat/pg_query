@@ -1181,6 +1181,38 @@ describe PgQuery, '#qualify_with_filter' do
     expect(query).to eq "WITH recent AS (SELECT * FROM public.orders WHERE orders.sbid = 42) SELECT * FROM recent"
   end
 
+  it "does not qualify or filter information_schema views" do
+    query = described_class.qualify_with_filter(
+      "SELECT schema_name FROM information_schema.schemata", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to eq "SELECT schema_name FROM information_schema.schemata"
+  end
+
+  it "does not qualify or filter pg_catalog relations" do
+    query = described_class.qualify_with_filter(
+      "SELECT relname FROM pg_catalog.pg_class", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to eq "SELECT relname FROM pg_catalog.pg_class"
+  end
+
+  it "does not filter unqualified pg_ catalog relations" do
+    query = described_class.qualify_with_filter(
+      "SELECT relname FROM pg_class", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to eq "SELECT relname FROM pg_class"
+  end
+
+  it "filters application tables but not joined system views" do
+    query = described_class.qualify_with_filter(
+      "SELECT * FROM users u JOIN information_schema.schemata s ON s.schema_name = u.name", "public",
+      filter_column: "sbid", filter_value: 42
+    )
+    expect(query).to eq "SELECT * FROM public.users u JOIN information_schema.schemata s ON s.schema_name = u.name WHERE u.sbid = 42"
+  end
+
   it "filters the SELECT of an INSERT ... SELECT, and injects sbid into INSERT ... VALUES" do
     insert_select = described_class.qualify_with_filter(
       "INSERT INTO audit (x) SELECT id FROM orders", "public",

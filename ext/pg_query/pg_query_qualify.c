@@ -79,6 +79,13 @@ static void and_into(Node **existing, Node *add) {
     }
 }
 
+static bool rangevar_is_system_relation(RangeVar *rv) {
+    if (!rv || !rv->relname) return false;
+    if (strncmp(rv->relname, "pg_", 3) == 0) return true;
+    if (!rv->schemaname) return false;
+    return strcmp(rv->schemaname, "pg_catalog") == 0 ||
+           strcmp(rv->schemaname, "information_schema") == 0;
+}
 
 static void qualify_rangevar(RangeVar *rv, const char *schema, List *cte_names) {
     // Safety check: ensure rv and rv->relname are not NULL
@@ -97,8 +104,12 @@ static void qualify_rangevar(RangeVar *rv, const char *schema, List *cte_names) 
         }
     }
 
-    // Don't qualify tables that start with "pg_" (PostgreSQL system tables)
-    if (strncmp(rv->relname, "pg_", 3) == 0) {
+    // Don't qualify system relations. This includes unqualified pg_* catalogs
+    // and explicitly schema-qualified pg_catalog/information_schema views.
+    // Unqualified non-pg_ system views (e.g. schemata via search_path) are not
+    // inferred here; without an explicit schema they look like application
+    // relations and stay conservative.
+    if (rangevar_is_system_relation(rv)) {
         return;
     }
 
@@ -820,6 +831,7 @@ static bool wrap_nullable_with_filter(Node **slot, List *cte_names, const Filter
             if (strcmp(rv->relname, (char *) lfirst(lc)) == 0) return false;
         }
     }
+    if (rangevar_is_system_relation(rv)) return false;
     if (table_is_excluded(rv->relname, spec)) return false;
 
     // The wrapped table is unaliased inside the subquery, so the predicate must
@@ -910,6 +922,7 @@ static void filter_collect_tables(Node *node, bool nullable, Node **where_accum,
                     if (strcmp(rv->relname, (char *) lfirst(lc)) == 0) return;
                 }
             }
+            if (rangevar_is_system_relation(rv)) return;
             if (table_is_excluded(rv->relname, spec)) return;
             const char *ref = (rv->alias && rv->alias->aliasname)
                                   ? rv->alias->aliasname : rv->relname;
@@ -1026,6 +1039,9 @@ static bool is_param_ref_expr(Node *node) {
 // Returns nothing; signals refusal via spec->refused.
 static void inject_insert_values(InsertStmt *stmt, const FilterSpec *spec) {
     // Only base tables that are not excluded get a tenant column.
+    if (rangevar_is_system_relation(stmt->relation)) {
+        return;
+    }
     if (stmt->relation && stmt->relation->relname &&
         table_is_excluded(stmt->relation->relname, spec)) {
         return;

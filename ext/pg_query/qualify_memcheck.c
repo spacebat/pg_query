@@ -50,6 +50,29 @@ static void expect_ok(const char *label, const char *sql, const char *must_conta
     free(out);
 }
 
+/* Run a filtered qualify and assert a substring is absent from the output. */
+static void expect_absent(const char *label, const char *sql, const char *must_not_contain)
+{
+    int unhandled = 0;
+    char *out = pg_query_qualify_sql_full(sql, SCHEMA, NULL, 0, "sbid", 42,
+                                          NULL, 0, &unhandled, 1 /* strict */);
+    checks++;
+    if (!out) {
+        fprintf(stderr, "FAIL [%s]: expected SQL, got NULL (unhandled=%d)\n", label, unhandled);
+        failures++;
+        return;
+    }
+    if (unhandled) {
+        fprintf(stderr, "FAIL [%s]: unexpected refusal flag\n", label);
+        failures++;
+    }
+    if (must_not_contain && strstr(out, must_not_contain)) {
+        fprintf(stderr, "FAIL [%s]: output unexpectedly contained %s:\n  %s\n", label, must_not_contain, out);
+        failures++;
+    }
+    free(out);
+}
+
 /* Run a filtered qualify in strict mode and assert it is refused: NULL result
  * with unhandled == 1 (distinct from a parse failure, which is NULL + 0). */
 static void expect_refused(const char *label, const char *sql)
@@ -137,6 +160,8 @@ int main(void)
     expect_ok("insert values correct sbid", "INSERT INTO shifts (sbid, a) VALUES (42, 1)", NULL);
     expect_ok("insert values param sbid", "INSERT INTO shifts (a, sbid) VALUES ($1, $2)", "42");
     expect_ok("insert values multi param sbid", "INSERT INTO shifts (a, sbid) VALUES ($1, $2), ($3, $4)", "42");
+    expect_absent("information_schema no sbid", "SELECT schema_name FROM information_schema.schemata", "sbid");
+    expect_absent("pg_catalog no sbid", "SELECT relname FROM pg_catalog.pg_class", "sbid");
     expect_ok("insert select",        "INSERT INTO audit (x) SELECT id FROM orders", "WHERE");
     expect_refused("insert values conflicting sbid", "INSERT INTO shifts (sbid, a) VALUES (7, 1)");
     expect_refused("insert values short tuple", "INSERT INTO shifts (a, sbid) VALUES ($1)");
